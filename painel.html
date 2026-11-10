@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AENA · Relatório</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Relatório da Alimentação Escolar</h1>
+      <div class="muted" id="subtitulo"></div>
+    </div>
+    <div class="actions no-print">
+      <button class="secondary" id="btnCsv">Exportar CSV</button>
+      <button id="btnPrint">Imprimir / PDF</button>
+    </div>
+  </div>
+
+  <div class="card no-print">
+    <div class="row">
+      <div class="field sm"><label>De</label><input type="date" id="dIni"></div>
+      <div class="field sm"><label>Até</label><input type="date" id="dFim"></div>
+      <div class="field"><label>Escola</label><select id="fEscola"></select></div>
+      <div class="field sm"><label>Atalho</label>
+        <select id="atalho"><option value="">—</option><option value="mes">Mês atual</option><option value="mesAnt">Mês anterior</option><option value="ano">Ano atual</option></select></div>
+    </div>
+  </div>
+
+  <h2>Atendimento</h2>
+  <div class="kpis" id="kAtend"></div>
+
+  <h2>Execução financeira e compras</h2>
+  <div class="kpis" id="kFin"></div>
+
+  <h2>Conformidade com o PNAE (compras com recurso FNDE no período)</h2>
+  <div class="card" id="conformidade"></div>
+
+  <div class="grid grid-2">
+    <div class="card"><h2>Por escola</h2><div class="table-wrap"><table id="tblEscolas"></table></div></div>
+    <div class="card"><h2>Estimativa de repasse FNDE (per capita 2026)</h2><div class="table-wrap"><table id="tblRepasse"></table></div>
+      <small class="muted">Matrículas × valor per capita × dias letivos (Res. CD/FNDE nº 1/2026). Valores de referência; confira o demonstrativo oficial do FNDE.</small></div>
+  </div>
+
+  <div class="card"><h2>Consumo por produto</h2><div class="table-wrap"><table id="tblConsumo"></table></div></div>
+
+  <div class="grid grid-2">
+    <div class="card"><h2>Compras por fornecedor</h2><div class="table-wrap"><table id="tblForn"></table></div></div>
+    <div class="card"><h2>Alertas de estoque</h2><div id="alertas"></div></div>
+  </div>
+
+  <div class="card"><h2>Ocorrências registradas pelas cozinhas</h2><div class="table-wrap"><table id="tblOcorr"></table></div></div>
+
+  <div class="print-only" style="margin-top:2rem">
+    <p>_____________________________________<br>Diretor(a) de Alimentação Escolar</p>
+    <p>_____________________________________<br>Nutricionista Responsável Técnica</p>
+  </div>
+</main>
+
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/ui.js"></script>
+<script>
+const sess = UI.init();
+if (sess) {
+  const { $, esc, money, num, pct, data } = UI;
+  const cfg = DB.load().config;
+  const hoje = UI.hoje();
+  $('#dIni').value = hoje.slice(0, 8) + '01';
+  $('#dFim').value = hoje;
+  $('#fEscola').innerHTML = UI.options(DB.list('escolas'), 'id', e => e.nome, '', 'Todas as escolas');
+
+  $('#atalho').onchange = () => {
+    const d = new Date(hoje + 'T12:00:00'), v = $('#atalho').value;
+    const iso = x => x.toISOString().slice(0, 10);
+    if (v === 'mes') { $('#dIni').value = hoje.slice(0, 8) + '01'; $('#dFim').value = hoje; }
+    if (v === 'mesAnt') { const a = new Date(d.getFullYear(), d.getMonth() - 1, 1, 12), b = new Date(d.getFullYear(), d.getMonth(), 0, 12); $('#dIni').value = iso(a); $('#dFim').value = iso(b); }
+    if (v === 'ano') { $('#dIni').value = hoje.slice(0, 4) + '-01-01'; $('#dFim').value = hoje; }
+    render();
+  };
+  ['#dIni', '#dFim', '#fEscola'].forEach(s => $(s).onchange = render);
+
+  const kpi = (label, value, hint, cls) => `<div class="kpi ${cls || ''}"><div class="label">${label}</div><div class="value">${value}</div>${hint ? `<div class="hint">${hint}</div>` : ''}</div>`;
+  const noPeriodo = d => d >= $('#dIni').value && d <= $('#dFim').value;
+  let csvLinhas = [];
+
+  function render() {
+    const ini = $('#dIni').value, fim = $('#dFim').value, esc_ = $('#fEscola').value;
+    const escolaNome = esc_ ? DB.get('escolas', esc_).nome : 'Todas as escolas';
+    $('#subtitulo').textContent = `${cfg.entidade} · ${cfg.municipio} · Período: ${data(ini)} a ${data(fim)} · ${escolaNome}`;
+    csvLinhas = [['Relatório AENA', `${data(ini)} a ${data(fim)}`, escolaNome], []];
+
+    const refeicoes = DB.list('refeicoes').filter(r => noPeriodo(r.data) && (!esc_ || r.escolaId === esc_));
+    const saidas = DB.list('saidas').filter(s => noPeriodo(s.data) && (!esc_ || s.escolaId === esc_ || (s.tipo === 'perda' && !esc_)));
+    const consumo = saidas.filter(s => s.tipo !== 'perda');
+    const perdas = saidas.filter(s => s.tipo === 'perda');
+    const entradas = DB.list('entradas').filter(e => noPeriodo(e.data));
+    const repasses = DB.list('repasses').filter(r => noPeriodo(r.data));
+
+    /* --- Atendimento --- */
+    const totRef = refeicoes.reduce((t, r) => t + r.alunos, 0);
+    const dias = new Set(refeicoes.map(r => r.data + '|' + r.escolaId)).size;
+    const diasUnicos = new Set(refeicoes.map(r => r.data)).size;
+    const escolasSel = DB.list('escolas').filter(e => e.ativo !== false && (!esc_ || e.id === esc_));
+    const matriculas = escolasSel.reduce((t, e) => t + DB.totalAlunos(e), 0);
+    const custoConsumo = consumo.reduce((t, s) => t + s.quantidade * DB.precoMedio(s.produtoId), 0);
+    const custoPerdas = perdas.reduce((t, s) => t + s.quantidade * DB.precoMedio(s.produtoId), 0);
+    const mediaDia = diasUnicos ? totRef / diasUnicos : 0;
+    const cobertura = matriculas ? (mediaDia / matriculas) * 100 : 0;
+    $('#kAtend').innerHTML =
+      kpi('Refeições servidas', num(totRef, 0), `${diasUnicos} dia(s) com registro`) +
+      kpi('Alunos matriculados', num(matriculas, 0), `${escolasSel.length} escola(s)`) +
+      kpi('Média atendida/dia', num(mediaDia, 0), `${pct(cobertura)} das matrículas`, cobertura >= 80 ? 'ok' : (cobertura ? 'warn' : '')) +
+      kpi('Custo dos gêneros consumidos', money(custoConsumo), 'Pelo preço médio de compra') +
+      kpi('Custo médio por refeição', money(totRef ? custoConsumo / totRef : 0), 'Comparar com per capita') +
+      kpi('Perdas / baixas', money(custoPerdas), `${perdas.length} registro(s)`, custoPerdas > 0 ? 'warn' : 'ok');
+    csvLinhas.push(['Refeições servidas', totRef], ['Matrículas', matriculas], ['Custo consumo', custoConsumo.toFixed(2)], ['Custo por refeição', (totRef ? custoConsumo / totRef : 0).toFixed(2)], ['Perdas', custoPerdas.toFixed(2)], []);
+
+    /* --- Financeiro --- */
+    const tot = e => e.quantidade * e.valorUnit;
+    const fnde = entradas.filter(e => e.fonte !== 'proprio');
+    const totFnde = fnde.reduce((t, e) => t + tot(e), 0);
+    const totProprio = entradas.filter(e => e.fonte === 'proprio').reduce((t, e) => t + tot(e), 0);
+    const recFnde = repasses.filter(r => r.fonte !== 'proprio').reduce((t, r) => t + r.valor, 0);
+    const recProprio = repasses.filter(r => r.fonte === 'proprio').reduce((t, r) => t + r.valor, 0);
+    const valorEstoque = DB.list('produtos').reduce((t, p) => t + Math.max(0, DB.estoque(p.id)) * DB.precoMedio(p.id), 0);
+    $('#kFin').innerHTML =
+      kpi('Recurso FNDE recebido', money(recFnde), 'Registrado no período') +
+      kpi('Compras com recurso FNDE', money(totFnde), recFnde ? `${pct(totFnde / recFnde * 100)} executado` : '') +
+      kpi('Contrapartida municipal', money(totProprio), `Recebido/registrado: ${money(recProprio)}`) +
+      kpi('Total de compras', money(totFnde + totProprio), `${entradas.length} entrada(s)`) +
+      kpi('Valor atual em estoque', money(valorEstoque), 'Posição de hoje');
+    csvLinhas.push(['Recurso FNDE recebido', recFnde.toFixed(2)], ['Compras FNDE', totFnde.toFixed(2)], ['Compras recurso próprio', totProprio.toFixed(2)], ['Valor em estoque', valorEstoque.toFixed(2)], []);
+
+    /* --- Conformidade --- */
+    const af = fnde.filter(e => e.agriFamiliar).reduce((t, e) => t + tot(e), 0);
+    const porClasse = { innatura: 0, culinario: 0, processado: 0, ultra: 0 };
+    fnde.forEach(e => { const p = DB.get('produtos', e.produtoId); if (p) porClasse[p.classe] = (porClasse[p.classe] || 0) + tot(e); });
+    const P = v => totFnde ? v / totFnde * 100 : 0;
+    const linhas = [
+      ['Agricultura familiar', P(af), `mín. ${cfg.metaAgriculturaFamiliar}%`, P(af) >= cfg.metaAgriculturaFamiliar, 'Lei 11.947/2009, art. 14 (alterado pela Lei 15.226/2025)'],
+      ['In natura / minimamente processados', P(porClasse.innatura), `mín. ${cfg.minInNatura}%`, P(porClasse.innatura) >= cfg.minInNatura, 'Res. CD/FNDE nº 4/2026'],
+      ['Ingredientes culinários processados', P(porClasse.culinario), `máx. ${cfg.limiteCulinario}%`, P(porClasse.culinario) <= cfg.limiteCulinario, 'Res. CD/FNDE nº 4/2026'],
+      ['Processados + ultraprocessados', P(porClasse.processado + porClasse.ultra), `máx. ${cfg.limiteProcUltra}%`, P(porClasse.processado + porClasse.ultra) <= cfg.limiteProcUltra, 'Res. CD/FNDE nº 4/2026']
+    ];
+    let h = `<div class="table-wrap"><table><thead><tr><th>Indicador</th><th style="width:35%">Percentual</th><th class="num">Atual</th><th>Parâmetro</th><th>Situação</th><th>Base</th></tr></thead><tbody>`;
+    linhas.forEach(([n, v, par, ok, base]) => {
+      h += `<tr><td>${n}</td><td><div class="bar"><span style="width:${Math.min(100, v)}%;background:${ok ? 'var(--ok)' : 'var(--warn)'}"></span></div></td>
+        <td class="num">${pct(v)}</td><td>${par}</td><td>${totFnde ? (ok ? '<span class="badge ok">Atende</span>' : '<span class="badge bad">Fora</span>') : '<span class="badge info">Sem compras</span>'}</td><td><small>${base}</small></td></tr>`;
+      csvLinhas.push([n, v.toFixed(1) + '%', par]);
+    });
+    h += '</tbody></table></div><small class="muted">O percentual da agricultura familiar é apurado sobre o total repassado pelo FNDE no exercício; aqui é mostrado sobre as compras FNDE do período como acompanhamento. Parâmetros editáveis em Usuários › Configurações.</small>';
+    $('#conformidade').innerHTML = h;
+    csvLinhas.push([]);
+
+    /* --- Por escola --- */
+    h = '<thead><tr><th>Escola</th><th class="num">Matrículas</th><th class="num">Refeições</th><th class="num">Dias</th><th class="num">Custo gêneros</th><th class="num">R$/refeição</th></tr></thead><tbody>';
+    csvLinhas.push(['Escola', 'Matrículas', 'Refeições', 'Dias', 'Custo', 'R$/refeição']);
+    escolasSel.forEach(e => {
+      const rr = refeicoes.filter(r => r.escolaId === e.id);
+      const n = rr.reduce((t, r) => t + r.alunos, 0);
+      const d = new Set(rr.map(r => r.data)).size;
+      const c = consumo.filter(s => s.escolaId === e.id).reduce((t, s) => t + s.quantidade * DB.precoMedio(s.produtoId), 0);
+      h += `<tr><td>${esc(e.nome)}</td><td class="num">${DB.totalAlunos(e)}</td><td class="num">${num(n, 0)}</td><td class="num">${d}</td><td class="num">${money(c)}</td><td class="num">${money(n ? c / n : 0)}</td></tr>`;
+      csvLinhas.push([e.nome, DB.totalAlunos(e), n, d, c.toFixed(2), (n ? c / n : 0).toFixed(2)]);
+    });
+    $('#tblEscolas').innerHTML = h + '</tbody>';
+    csvLinhas.push([]);
+
+    /* --- Repasse estimado --- */
+    const porMod = {};
+    escolasSel.forEach(e => Object.entries(e.alunos || {}).forEach(([k, v]) => porMod[k] = (porMod[k] || 0) + (+v || 0)));
+    let totRep = 0;
+    h = '<thead><tr><th>Modalidade</th><th class="num">Alunos</th><th class="num">Per capita</th><th class="num">Por dia</th><th class="num">Ano (' + cfg.diasLetivos + ' dias)</th></tr></thead><tbody>';
+    Object.entries(porMod).forEach(([k, n]) => {
+      const m = DB.MODALIDADES[k]; if (!m) return;
+      const ano = n * m.perCapita * cfg.diasLetivos; totRep += ano;
+      h += `<tr><td>${m.nome}</td><td class="num">${n}</td><td class="num">${money(m.perCapita)}</td><td class="num">${money(n * m.perCapita)}</td><td class="num">${money(ano)}</td></tr>`;
+    });
+    $('#tblRepasse').innerHTML = h + `<tr class="total"><td colspan="4">Estimativa anual</td><td class="num">${money(totRep)}</td></tr><tr><td colspan="4">Meta mínima agricultura familiar (${cfg.metaAgriculturaFamiliar}%)</td><td class="num">${money(totRep * cfg.metaAgriculturaFamiliar / 100)}</td></tr></tbody>`;
+
+    /* --- Consumo por produto --- */
+    const cp = {};
+    consumo.forEach(s => { cp[s.produtoId] = (cp[s.produtoId] || 0) + s.quantidade; });
+    h = '<thead><tr><th>Produto</th><th>Classe</th><th class="num">Quantidade consumida</th><th class="num">Valor</th><th class="num">Saldo atual</th></tr></thead><tbody>';
+    csvLinhas.push(['Produto', 'Unidade', 'Consumo', 'Valor', 'Saldo']);
+    Object.entries(cp).map(([id, q]) => ({ p: DB.get('produtos', id), q })).filter(x => x.p)
+      .sort((a, b) => b.q * DB.precoMedio(b.p.id) - a.q * DB.precoMedio(a.p.id)).forEach(({ p, q }) => {
+        const v = q * DB.precoMedio(p.id);
+        h += `<tr><td>${esc(p.nome)}</td><td><small>${DB.CLASSES[p.classe] || ''}</small></td><td class="num">${num(q, 3)} ${p.unidade}</td><td class="num">${money(v)}</td><td class="num">${num(DB.estoque(p.id), 3)} ${p.unidade}</td></tr>`;
+        csvLinhas.push([p.nome, p.unidade, num(q, 3), v.toFixed(2), num(DB.estoque(p.id), 3)]);
+      });
+    if (!Object.keys(cp).length) h += '<tr><td colspan="5" class="muted">Sem saídas no período.</td></tr>';
+    $('#tblConsumo').innerHTML = h + '</tbody>';
+    csvLinhas.push([]);
+
+    /* --- Fornecedores --- */
+    const pf = {};
+    entradas.forEach(e => { const k = e.fornecedorId || '-'; pf[k] = pf[k] || { v: 0, af: false }; pf[k].v += tot(e); pf[k].af = pf[k].af || !!e.agriFamiliar; });
+    h = '<thead><tr><th>Fornecedor</th><th>AF</th><th class="num">Total</th></tr></thead><tbody>';
+    Object.entries(pf).sort((a, b) => b[1].v - a[1].v).forEach(([id, x]) => {
+      h += `<tr><td>${esc((DB.get('fornecedores', id) || {}).nome || 'Não informado')}</td><td>${x.af ? '<span class="badge ok">AF</span>' : ''}</td><td class="num">${money(x.v)}</td></tr>`;
+    });
+    if (!entradas.length) h += '<tr><td colspan="3" class="muted">Sem compras no período.</td></tr>';
+    $('#tblForn').innerHTML = h + '</tbody>';
+
+    /* --- Alertas --- */
+    const al = [];
+    DB.list('produtos').filter(p => p.ativo !== false).forEach(p => {
+      const s = DB.estoque(p.id);
+      if (p.estoqueMin && s < p.estoqueMin) al.push(`<span class="badge warn">Mínimo</span> ${esc(p.nome)}: ${num(s, 3)} ${p.unidade} (mín. ${num(p.estoqueMin, 3)})`);
+      DB.lotesComSaldo(p.id).forEach(l => {
+        if (!l.entrada.validade) return;
+        const d = UI.diasAte(l.entrada.validade);
+        if (d < 0) al.push(`<span class="badge bad">Vencido</span> ${esc(p.nome)}: ${num(l.saldo, 3)} ${p.unidade} venceu em ${data(l.entrada.validade)}`);
+        else if (d <= cfg.alertaValidadeDias) al.push(`<span class="badge warn">Validade</span> ${esc(p.nome)}: ${num(l.saldo, 3)} ${p.unidade} vence em ${d} dia(s)`);
+      });
+    });
+    $('#alertas').innerHTML = al.length ? al.map(a => `<div style="margin:.25rem 0">${a}</div>`).join('') : '<div class="alert ok">Nenhum alerta.</div>';
+
+    /* --- Ocorrências --- */
+    const oc = refeicoes.filter(r => r.ocorrencia).sort((a, b) => b.data.localeCompare(a.data));
+    h = '<thead><tr><th>Data</th><th>Escola</th><th>Ocorrência</th><th>Registrado por</th></tr></thead><tbody>';
+    oc.forEach(r => { h += `<tr><td>${data(r.data)}</td><td>${esc((DB.get('escolas', r.escolaId) || {}).nome)}</td><td>${esc(r.ocorrencia)}</td><td>${esc(r.criadoPor)}</td></tr>`; });
+    if (!oc.length) h += '<tr><td colspan="4" class="muted">Nenhuma ocorrência no período.</td></tr>';
+    $('#tblOcorr').innerHTML = h + '</tbody>';
+  }
+
+  $('#btnPrint').onclick = () => window.print();
+  $('#btnCsv').onclick = () => UI.download(`relatorio_aena_${$('#dIni').value}_${$('#dFim').value}.csv`, UI.csv(csvLinhas), 'text/csv');
+  render();
+}
+</script>
+</body>
+</html>

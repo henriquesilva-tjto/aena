@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AENA · Usuários</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <h1>Administração</h1>
+  <div class="tabs">
+    <button data-tab="tUsuarios">Usuários</button>
+    <button data-tab="tConfig">Configurações</button>
+    <button data-tab="tLog">Registro de atividades</button>
+  </div>
+
+  <section class="tab-panel" id="tUsuarios">
+    <div class="card">
+      <h2 id="tituloU">Novo usuário</h2>
+      <form id="fU">
+        <input type="hidden" name="id">
+        <div class="row">
+          <div class="field"><label>Nome completo</label><input name="nome" required></div>
+          <div class="field sm"><label>Usuário (login)</label><input name="login" required pattern="[a-zA-Z0-9._-]{3,30}" title="3 a 30 caracteres: letras, números, ponto, hífen"></div>
+          <div class="field"><label>Perfil</label><select name="papel"></select></div>
+          <div class="field"><label>Escola (merendeira)</label><select name="escolaId"></select></div>
+        </div>
+        <div class="row">
+          <div class="field sm"><label>Senha inicial</label><input name="senha" type="text" placeholder="Em branco = manter"></div>
+          <label style="display:flex;gap:.4rem;align-items:center"><input type="checkbox" name="ativo" checked> Ativo</label>
+        </div>
+        <small class="muted">O usuário será obrigado a trocar a senha inicial no primeiro acesso.</small>
+        <div class="actions" style="margin-top:.6rem"><button type="submit">Salvar</button><button type="button" class="secondary" id="limparU">Limpar</button></div>
+      </form>
+    </div>
+    <div class="card"><h2>Usuários</h2><div class="table-wrap"><table id="tblU"></table></div></div>
+  </section>
+
+  <section class="tab-panel" id="tConfig">
+    <div class="card">
+      <h2>Parâmetros</h2>
+      <form id="fCfg">
+        <div class="row">
+          <div class="field"><label>Município</label><input name="municipio"></div>
+          <div class="field"><label>Entidade executora</label><input name="entidade"></div>
+          <div class="field sm"><label>Dias letivos/ano</label><input type="number" name="diasLetivos"></div>
+          <div class="field sm"><label>Alerta de validade (dias)</label><input type="number" name="alertaValidadeDias"></div>
+        </div>
+        <div class="row">
+          <div class="field sm"><label>Meta agric. familiar (%)</label><input type="number" step="0.1" name="metaAgriculturaFamiliar"></div>
+          <div class="field sm"><label>Mín. in natura (%)</label><input type="number" step="0.1" name="minInNatura"></div>
+          <div class="field sm"><label>Máx. culinários (%)</label><input type="number" step="0.1" name="limiteCulinario"></div>
+          <div class="field sm"><label>Máx. proc. + ultra (%)</label><input type="number" step="0.1" name="limiteProcUltra"></div>
+        </div>
+        <h3>Valores per capita PNAE (R$/aluno/dia)</h3>
+        <div class="row" id="pcs"></div>
+        <button type="submit">Salvar configurações</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="tab-panel" id="tLog">
+    <div class="card"><h2>Últimas 300 ações</h2><div class="table-wrap"><table id="tblLog"></table></div></div>
+  </section>
+</main>
+
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/ui.js"></script>
+<script>
+const sess = UI.init();
+if (sess) {
+  const { $, esc, data } = UI;
+  UI.tabs(document);
+  const fU = $('#fU');
+  fU.elements.papel.innerHTML = Object.entries(DB.PAPEIS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  fU.elements.escolaId.innerHTML = UI.options(DB.list('escolas'), 'id', e => e.nome, '', '—');
+
+  function limpar() { fU.reset(); fU.elements.id.value = ''; fU.elements.ativo.checked = true; $('#tituloU').textContent = 'Novo usuário'; }
+  $('#limparU').onclick = limpar;
+
+  fU.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const o = UI.formData(fU);
+    o.login = o.login.toLowerCase();
+    if (DB.list('usuarios').some(u => u.login === o.login && u.id !== o.id)) return UI.toast('Login já existe.');
+    if (o.papel === 'merendeira' && !o.escolaId) return UI.toast('Vincule a merendeira a uma escola.');
+    if (o.id === sess.userId && (o.papel !== 'admin' || !o.ativo)) return UI.toast('Você não pode remover seu próprio acesso de administrador.');
+    const senha = o.senha; delete o.senha;
+    if (!o.id && !senha) return UI.toast('Informe a senha inicial.');
+    if (senha) { const e = Auth.validaSenha(senha); if (e) return UI.toast(e); }
+    let u;
+    if (o.id) u = DB.update('usuarios', o.id, o); else { delete o.id; u = DB.insert('usuarios', o); }
+    if (senha) { await Auth.setSenha(u.id, senha); DB.update('usuarios', u.id, { trocarSenha: true }); }
+    UI.toast('Usuário salvo.'); limpar(); render();
+  });
+
+  function render() {
+    let h = '<thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Escola</th><th>Último acesso</th><th>Status</th><th></th></tr></thead><tbody>';
+    DB.list('usuarios').forEach(u => {
+      h += `<tr><td>${esc(u.nome)}</td><td>${esc(u.login)}</td><td>${DB.PAPEIS[u.papel]}</td><td>${esc((DB.get('escolas', u.escolaId) || {}).nome || '')}</td>
+        <td>${u.ultimoAcesso ? data(u.ultimoAcesso) : '-'}</td>
+        <td>${u.ativo ? '<span class="badge ok">Ativo</span>' : '<span class="badge bad">Inativo</span>'} ${u.trocarSenha ? '<span class="badge warn">Trocar senha</span>' : ''}</td>
+        <td><button class="sm secondary" data-ed="${u.id}">Editar</button></td></tr>`;
+    });
+    $('#tblU').innerHTML = h + '</tbody>';
+  }
+  $('#tblU').onclick = ev => {
+    const id = ev.target.dataset.ed; if (!id) return;
+    const u = DB.get('usuarios', id); limpar();
+    UI.fillForm(fU, { id: u.id, nome: u.nome, login: u.login, papel: u.papel, escolaId: u.escolaId || '', ativo: u.ativo });
+    $('#tituloU').textContent = 'Editar usuário'; fU.scrollIntoView();
+  };
+
+  /* Configurações */
+  const fC = $('#fCfg');
+  const cfg = DB.load().config;
+  $('#pcs').innerHTML = Object.entries(DB.MODALIDADES).map(([k, m]) =>
+    `<div class="field sm"><label>${m.nome}</label><input type="number" step="0.01" name="pc_${k}" value="${(cfg.perCapita || {})[k] ?? m.perCapita}"></div>`).join('');
+  UI.fillForm(fC, cfg);
+  fC.addEventListener('submit', ev => {
+    ev.preventDefault();
+    const o = UI.formData(fC); const pc = {};
+    Object.keys(o).forEach(k => { if (k.startsWith('pc_')) { pc[k.slice(3)] = +o[k]; delete o[k]; } });
+    ['diasLetivos', 'alertaValidadeDias', 'metaAgriculturaFamiliar', 'minInNatura', 'limiteCulinario', 'limiteProcUltra'].forEach(k => o[k] = +o[k]);
+    Object.assign(DB.load().config, o, { perCapita: pc });
+    DB.logAction('alterou', 'config', '-'); DB.save(); UI.toast('Configurações salvas.');
+  });
+
+  /* Log */
+  const log = DB.list('log').slice(-300).reverse();
+  $('#tblLog').innerHTML = '<thead><tr><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Cadastro</th></tr></thead><tbody>' +
+    log.map(l => `<tr><td>${new Date(l.em).toLocaleString('pt-BR')}</td><td>${esc(l.por)}</td><td>${esc(l.acao)}</td><td>${esc(l.col)}</td></tr>`).join('') + '</tbody>';
+
+  limpar(); render();
+}
+</script>
+</body>
+</html>

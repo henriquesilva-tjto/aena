@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AENA · Nutricionista</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Nutricionista (Responsável Técnica)</h1>
+      <div class="muted">Fichas técnicas de preparação e elaboração de cardápios.</div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button data-tab="tFichas">Fichas técnicas</button>
+    <button data-tab="tCardapios">Cardápios</button>
+    <button data-tab="tVer">Visualizar / Imprimir</button>
+  </div>
+
+  <!-- FICHAS TÉCNICAS -->
+  <section class="tab-panel" id="tFichas">
+    <div class="card">
+      <h2 id="tituloFicha">Nova ficha técnica de preparação</h2>
+      <form id="fFicha">
+        <input type="hidden" name="id">
+        <div class="row">
+          <div class="field lg"><label>Nome da preparação</label><input name="nome" required placeholder="Ex.: Arroz com frango e abóbora"></div>
+          <div class="field"><label>Tipo de refeição</label>
+            <select name="tipo"><option>Desjejum</option><option>Lanche</option><option selected>Almoço</option><option>Refeição</option><option>Jantar</option><option>Sobremesa</option></select></div>
+          <div class="field"><label>Público</label>
+            <select name="publico"><option value="">Todos</option></select></div>
+        </div>
+        <div class="row">
+          <div class="field sm"><label>Tempo de preparo (min)</label><input type="number" min="0" name="tempo"></div>
+          <div class="field sm"><label>Medida caseira/porção</label><input name="medidaCaseira" placeholder="Ex.: 1 concha média"></div>
+          <div class="field sm"><label>Rendimento-teste (porções)</label><input type="number" min="1" name="rendimento" value="100"></div>
+          <div class="field"><label>Utensílios</label><input name="utensilios"></div>
+        </div>
+
+        <h3 style="margin-top:.8rem">Ingredientes (per capita)</h3>
+        <div class="muted" style="margin-bottom:.4rem">Per capita líquido = parte comestível por aluno (g ou mL). FC = fator de correção (peso bruto ÷ peso líquido).</div>
+        <div class="table-wrap"><table id="tblIng"></table></div>
+        <button type="button" class="secondary sm" id="addIng" style="margin:.5rem 0">+ Ingrediente</button>
+
+        <div class="row"><div class="field"><label>Modo de preparo</label><textarea name="modoPreparo"></textarea></div></div>
+        <div class="row"><div class="field"><label>Observações (alergênicos, substituições, restrições)</label><textarea name="obs"></textarea></div></div>
+
+        <div id="resumoFicha"></div>
+        <div class="actions">
+          <button type="submit">Salvar ficha técnica</button>
+          <button type="button" class="secondary" id="limparFicha">Nova / Limpar</button>
+        </div>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Fichas cadastradas</h2>
+      <div class="table-wrap"><table id="tblFichas"></table></div>
+    </div>
+  </section>
+
+  <!-- CARDÁPIOS -->
+  <section class="tab-panel" id="tCardapios">
+    <div class="card">
+      <h2 id="tituloCard">Novo cardápio semanal</h2>
+      <form id="fCard">
+        <input type="hidden" name="id">
+        <div class="row">
+          <div class="field lg"><label>Identificação</label><input name="nome" required placeholder="Ex.: Cardápio Fundamental - Semana 1 - Março"></div>
+          <div class="field sm"><label>Início (segunda-feira)</label><input type="date" name="dataInicio" required></div>
+          <div class="field sm"><label>Repetir por (semanas)</label><input type="number" min="1" max="8" name="semanas" value="1"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Modalidade / faixa etária</label><select name="modalidade"></select></div>
+          <div class="field"><label>Período</label><select name="periodo"><option value="parcial">Parcial</option><option value="integral">Integral</option></select></div>
+          <div class="field sm"><label>Meta kcal/dia por aluno</label><input type="number" min="0" name="metaKcal" title="Conforme % das necessidades (Res. FNDE)"></div>
+          <div class="field sm"><label>Meta PTN (g)/dia</label><input type="number" min="0" step="0.1" name="metaPtn"></div>
+        </div>
+        <div class="row"><div class="field"><label>Escolas (vazio = todas)</label><select name="escolaIds" multiple size="3"></select></div></div>
+
+        <div class="table-wrap"><table id="tblSemana"></table></div>
+        <div class="row" style="margin-top:.6rem"><div class="field"><label>Observações (ex.: cardápio especial para alunos com restrição)</label><textarea name="obs"></textarea></div></div>
+        <div id="checkCard"></div>
+        <div class="actions">
+          <button type="submit">Salvar cardápio</button>
+          <button type="button" class="secondary" id="limparCard">Novo / Limpar</button>
+        </div>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Cardápios cadastrados</h2>
+      <div class="table-wrap"><table id="tblCards"></table></div>
+    </div>
+  </section>
+
+  <!-- VISUALIZAR -->
+  <section class="tab-panel" id="tVer">
+    <div class="card no-print">
+      <div class="row">
+        <div class="field lg"><label>Cardápio</label><select id="selVer"></select></div>
+        <div class="field sm"><label>&nbsp;</label><button id="btnPrint">Imprimir</button></div>
+      </div>
+    </div>
+    <div id="areaVer"></div>
+  </section>
+</main>
+
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/ui.js"></script>
+<script>
+const sess = UI.init();
+if (sess) {
+  const { $, esc, money, num, data } = UI;
+  UI.tabs(document);
+  const cfg = DB.load().config;
+  const produtosAtivos = () => DB.list('produtos').filter(p => p.ativo !== false).sort((a, b) => a.nome.localeCompare(b.nome));
+  const modalidadesOpts = Object.entries(DB.MODALIDADES).map(([k, m]) => `<option value="${k}">${m.nome}</option>`).join('');
+  $('#fFicha').elements.publico.innerHTML += modalidadesOpts;
+  $('#fCard').elements.modalidade.innerHTML = modalidadesOpts;
+
+  /* ================= FICHA TÉCNICA ================= */
+  const fF = $('#fFicha');
+  let ingredientes = [];
+
+  function renderIng() {
+    const opts = produtosAtivos();
+    let h = `<thead><tr><th>Ingrediente</th><th class="num">Per capita líquido (g/mL)</th><th class="num">FC</th>
+      <th class="num">Per capita bruto</th><th class="num">Total p/ rendimento</th><th></th></tr></thead><tbody>`;
+    const rend = +fF.elements.rendimento.value || 1;
+    ingredientes.forEach((i, idx) => {
+      const prod = DB.get('produtos', i.produtoId);
+      const bruto = (+i.perCapita || 0) * (+i.fc || 1);
+      const totUn = prod ? DB.gramasParaUnidade(prod, bruto * rend) : 0;
+      h += `<tr>
+        <td><select data-i="${idx}" data-k="produtoId">${UI.options(opts, 'id', p => p.nome + ' (' + p.unidade + ')', i.produtoId, 'Selecione...')}</select></td>
+        <td class="num"><input type="number" step="0.1" min="0" style="max-width:110px" data-i="${idx}" data-k="perCapita" value="${i.perCapita || ''}"></td>
+        <td class="num"><input type="number" step="0.01" min="1" style="max-width:80px" data-i="${idx}" data-k="fc" value="${i.fc || 1}"></td>
+        <td class="num" id="ib${idx}">${num(bruto, 1)} g</td>
+        <td class="num" id="it${idx}">${prod ? num(totUn, 3) + ' ' + prod.unidade : '-'}</td>
+        <td><button type="button" class="sm danger" data-rm="${idx}">×</button></td></tr>`;
+    });
+    $('#tblIng').innerHTML = h + '</tbody>';
+    renderResumo();
+  }
+  // Select: re-renderiza; campos numéricos: atualiza só os cálculos (não perde o foco)
+  $('#tblIng').addEventListener('change', ev => {
+    const t = ev.target; if (t.dataset.i === undefined) return;
+    ingredientes[+t.dataset.i][t.dataset.k] = t.value;
+    if (t.tagName === 'SELECT') renderIng(); else atualizaCalcIng();
+  });
+  $('#tblIng').addEventListener('input', ev => {
+    const t = ev.target; if (t.dataset.i === undefined || t.tagName === 'SELECT') return;
+    ingredientes[+t.dataset.i][t.dataset.k] = t.value; atualizaCalcIng();
+  });
+  function atualizaCalcIng() {
+    const rend = +fF.elements.rendimento.value || 1;
+    ingredientes.forEach((i, idx) => {
+      const prod = DB.get('produtos', i.produtoId);
+      const bruto = (+i.perCapita || 0) * (+i.fc || 1);
+      const cb = $('#ib' + idx), ct = $('#it' + idx);
+      if (cb) cb.textContent = num(bruto, 1) + ' g';
+      if (ct) ct.textContent = prod ? num(DB.gramasParaUnidade(prod, bruto * rend), 3) + ' ' + prod.unidade : '-';
+    });
+    renderResumo();
+  }
+  $('#tblIng').addEventListener('click', ev => {
+    if (ev.target.dataset.rm !== undefined) { ingredientes.splice(+ev.target.dataset.rm, 1); renderIng(); }
+  });
+  $('#addIng').onclick = () => { ingredientes.push({ produtoId: '', perCapita: '', fc: 1 }); renderIng(); };
+  fF.elements.rendimento.addEventListener('input', atualizaCalcIng);
+
+  function blocoNutri(c, titulo) {
+    return `<div class="kpis" style="margin-top:.6rem">
+      <div class="kpi"><div class="label">${titulo || 'Energia'}</div><div class="value">${num(c.kcal, 0)} kcal</div></div>
+      <div class="kpi"><div class="label">Proteína</div><div class="value">${num(c.ptn, 1)} g</div><div class="hint">${UI.pct(c.kcalPtn)} do VET (ref. 10–15%)</div></div>
+      <div class="kpi"><div class="label">Carboidrato</div><div class="value">${num(c.cho, 1)} g</div><div class="hint">${UI.pct(c.kcalCho)} do VET (ref. 55–65%)</div></div>
+      <div class="kpi"><div class="label">Lipídio</div><div class="value">${num(c.lip, 1)} g</div><div class="hint">${UI.pct(c.kcalLip)} do VET (ref. 15–30%)</div></div>
+      <div class="kpi"><div class="label">Fibra / Sódio</div><div class="value">${num(c.fibra, 1)} g</div><div class="hint">Sódio: ${num(c.sodio, 0)} mg</div></div>
+      <div class="kpi"><div class="label">Custo por porção</div><div class="value">${money(c.custo)}</div><div class="hint">Pelo preço médio de compra</div></div>
+    </div>`;
+  }
+  function renderResumo() {
+    const c = DB.calcFicha({ ingredientes });
+    let avisos = '';
+    if (c.classes.ultra) avisos += '<div class="alert bad">Contém ingrediente <b>ultraprocessado</b>. Verifique restrições da Res. CD/FNDE vigente.</div>';
+    if (fF.elements.publico.value === 'creche' && ingredientes.some(i => { const p = DB.get('produtos', i.produtoId); return p && p.grupo === 'acucar'; }))
+      avisos += '<div class="alert bad">Creche: é vedada a adição de açúcar, mel e adoçantes para crianças até 3 anos.</div>';
+    $('#resumoFicha').innerHTML = ingredientes.length ? '<h3>Resumo por porção</h3>' + blocoNutri(c) + avisos : '';
+  }
+  fF.elements.publico.addEventListener('change', renderResumo);
+
+  function limparFicha() {
+    fF.reset(); fF.elements.id.value = ''; ingredientes = [{ produtoId: '', perCapita: '', fc: 1 }];
+    $('#tituloFicha').textContent = 'Nova ficha técnica de preparação'; renderIng();
+  }
+  $('#limparFicha').onclick = limparFicha;
+
+  fF.addEventListener('submit', ev => {
+    ev.preventDefault();
+    const o = UI.formData(fF);
+    o.ingredientes = ingredientes.filter(i => i.produtoId && +i.perCapita > 0).map(i => ({ produtoId: i.produtoId, perCapita: +i.perCapita, fc: +i.fc || 1 }));
+    if (!o.ingredientes.length) return UI.toast('Inclua ao menos um ingrediente com per capita.');
+    o.rendimento = +o.rendimento || 1; o.tempo = +o.tempo || 0;
+    if (o.id) DB.update('preparacoes', o.id, o); else { delete o.id; DB.insert('preparacoes', o); }
+    UI.toast('Ficha técnica salva.'); limparFicha(); renderFichas(); renderSemana();
+  });
+
+  function renderFichas() {
+    let h = '<thead><tr><th>Preparação</th><th>Tipo</th><th>Público</th><th class="num">kcal</th><th class="num">PTN (g)</th><th class="num">Custo/porção</th><th></th></tr></thead><tbody>';
+    DB.list('preparacoes').slice().sort((a, b) => a.nome.localeCompare(b.nome)).forEach(p => {
+      const c = DB.calcFicha(p);
+      h += `<tr><td>${esc(p.nome)}</td><td>${esc(p.tipo)}</td><td>${p.publico ? DB.MODALIDADES[p.publico].nome : 'Todos'}</td>
+        <td class="num">${num(c.kcal, 0)}</td><td class="num">${num(c.ptn, 1)}</td><td class="num">${money(c.custo)}</td>
+        <td><button class="sm secondary" data-ed="${p.id}">Editar</button> <button class="sm secondary" data-dup="${p.id}">Duplicar</button>
+        <button class="sm secondary" data-pr="${p.id}">Imprimir</button> <button class="sm danger" data-del="${p.id}">Excluir</button></td></tr>`;
+    });
+    $('#tblFichas').innerHTML = h + '</tbody>';
+  }
+  $('#tblFichas').onclick = ev => {
+    const d = ev.target.dataset;
+    if (d.ed || d.dup) {
+      const p = JSON.parse(JSON.stringify(DB.get('preparacoes', d.ed || d.dup)));
+      if (d.dup) { p.id = ''; p.nome += ' (cópia)'; }
+      fF.reset(); UI.fillForm(fF, p); ingredientes = p.ingredientes || [];
+      $('#tituloFicha').textContent = d.dup ? 'Nova ficha (cópia)' : 'Editar ficha técnica';
+      renderIng(); fF.scrollIntoView();
+    }
+    if (d.del) {
+      const usado = DB.list('cardapios').some(c => Object.values(c.dias || {}).some(rs => rs.some(r => (r.preps || []).includes(d.del))));
+      if (usado && !confirm('Esta preparação está em cardápio(s). Excluir mesmo assim?')) return;
+      if (!usado && !confirm('Excluir ficha técnica?')) return;
+      DB.remove('preparacoes', d.del); renderFichas(); renderSemana();
+    }
+    if (d.pr) imprimirFicha(d.pr);
+  };
+
+  function htmlFicha(p) {
+    const c = DB.calcFicha(p);
+    const rend = p.rendimento || 1;
+    let h = `<div class="card"><h2>Ficha Técnica de Preparação — ${esc(p.nome)}</h2>
+      <div class="muted">${esc(cfg.entidade)} · ${esc(cfg.municipio)} · Tipo: ${esc(p.tipo)} · Público: ${p.publico ? DB.MODALIDADES[p.publico].nome : 'Todos'}
+      · Tempo: ${p.tempo || '-'} min · Porção: ${esc(p.medidaCaseira || '-')}</div>
+      <div class="table-wrap" style="margin-top:.6rem"><table><thead><tr><th>Ingrediente</th><th class="num">PC líquido (g)</th><th class="num">FC</th><th class="num">PC bruto (g)</th>
+      <th class="num">Qtd p/ ${rend} porções</th><th class="num">kcal</th><th class="num">PTN</th><th class="num">CHO</th><th class="num">LIP</th><th class="num">Custo</th></tr></thead><tbody>`;
+    c.ingredientes.forEach(i => {
+      h += `<tr><td>${esc(i.produto.nome)}</td><td class="num">${num(i.liquido, 1)}</td><td class="num">${num(i.fc, 2)}</td><td class="num">${num(i.bruto, 1)}</td>
+        <td class="num">${num(DB.gramasParaUnidade(i.produto, i.bruto * rend), 3)} ${i.produto.unidade}</td><td class="num">${num(i.kcal, 0)}</td>
+        <td class="num">${num(i.ptn, 1)}</td><td class="num">${num(i.cho, 1)}</td><td class="num">${num(i.lip, 1)}</td><td class="num">${money(i.custo)}</td></tr>`;
+    });
+    h += `<tr class="total"><td colspan="5">Total por porção</td><td class="num">${num(c.kcal, 0)}</td><td class="num">${num(c.ptn, 1)}</td>
+      <td class="num">${num(c.cho, 1)}</td><td class="num">${num(c.lip, 1)}</td><td class="num">${money(c.custo)}</td></tr></tbody></table></div>
+      <p><b>Modo de preparo:</b><br>${esc(p.modoPreparo || '-').replace(/\n/g, '<br>')}</p>
+      <p><b>Observações:</b> ${esc(p.obs || '-')}</p>
+      <p style="margin-top:2rem">_____________________________________<br>Nutricionista Responsável Técnica — CRN nº ________</p></div>`;
+    return h;
+  }
+  function imprimirFicha(id) {
+    const w = window.open('', '_blank');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Ficha técnica</title><link rel="stylesheet" href="css/style.css"></head>
+      <body><main>${htmlFicha(DB.get('preparacoes', id))}</main><script>setTimeout(()=>print(),400)<\/script></body></html>`);
+    w.document.close();
+  }
+
+  /* ================= CARDÁPIO ================= */
+  const fC = $('#fCard');
+  let semana = {};
+  const TIPOS_REF = ['Desjejum', 'Lanche', 'Almoço', 'Lanche da tarde', 'Jantar'];
+
+  function semanaVazia() { const s = {}; DB.DIAS.forEach(d => s[d] = [{ tipo: 'Lanche', preps: [] }]); return s; }
+
+  function renderSemana() {
+    const preps = DB.list('preparacoes').slice().sort((a, b) => a.nome.localeCompare(b.nome));
+    let h = '<thead><tr><th>Dia</th><th>Refeições e preparações</th><th class="num">kcal</th><th class="num">PTN</th><th class="num">Custo/aluno</th></tr></thead><tbody>';
+    DB.DIAS.forEach(dia => {
+      const refs = semana[dia] || [];
+      let kcal = 0, ptn = 0, custo = 0, blocos = '';
+      refs.forEach((r, ri) => {
+        let linhas = '';
+        (r.preps || []).forEach((pid, pi) => {
+          const p = DB.get('preparacoes', pid);
+          if (p) { const c = DB.calcFicha(p); kcal += c.kcal; ptn += c.ptn; custo += c.custo; }
+          linhas += `<span class="badge info" style="margin:.1rem">${esc(p ? p.nome : '(excluída)')}
+            <a href="#" data-dia="${dia}" data-ri="${ri}" data-rp="${pi}" style="color:inherit;text-decoration:none">×</a></span>`;
+        });
+        blocos += `<div style="border:1px dashed var(--line);border-radius:6px;padding:.4rem;margin-bottom:.3rem">
+          <div class="row" style="margin:0">
+            <div class="field sm"><select data-dia="${dia}" data-ri="${ri}" data-k="tipo">${TIPOS_REF.map(t => `<option ${t === r.tipo ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+            <div class="field lg"><select data-dia="${dia}" data-ri="${ri}" data-k="add">${UI.options(preps, 'id', p => p.nome, '', '+ adicionar preparação...')}</select></div>
+            <button type="button" class="sm danger" data-dia="${dia}" data-rmref="${ri}">Remover refeição</button>
+          </div><div style="margin-top:.3rem">${linhas || '<small class="muted">Sem preparações</small>'}</div></div>`;
+      });
+      blocos += `<button type="button" class="sm secondary" data-dia="${dia}" data-addref="1">+ Refeição</button>`;
+      const meta = +fC.elements.metaKcal.value;
+      const flag = meta ? (kcal >= meta * 0.9 ? 'ok' : 'warn') : '';
+      h += `<tr><td><b>${DB.DIAS_NOME[dia]}</b></td><td>${blocos}</td>
+        <td class="num">${flag ? `<span class="badge ${flag}">${num(kcal, 0)}</span>` : num(kcal, 0)}</td><td class="num">${num(ptn, 1)}</td><td class="num">${money(custo)}</td></tr>`;
+    });
+    $('#tblSemana').innerHTML = h + '</tbody>';
+    renderCheck();
+  }
+
+  $('#tblSemana').addEventListener('change', ev => {
+    const t = ev.target, dia = t.dataset.dia, ri = +t.dataset.ri;
+    if (!dia) return;
+    if (t.dataset.k === 'tipo') semana[dia][ri].tipo = t.value;
+    if (t.dataset.k === 'add' && t.value) semana[dia][ri].preps.push(t.value);
+    renderSemana();
+  });
+  $('#tblSemana').addEventListener('click', ev => {
+    const t = ev.target, dia = t.dataset.dia;
+    if (!dia) return;
+    if (t.dataset.addref) { semana[dia].push({ tipo: 'Almoço', preps: [] }); renderSemana(); }
+    if (t.dataset.rmref !== undefined) { semana[dia].splice(+t.dataset.rmref, 1); renderSemana(); }
+    if (t.dataset.rp !== undefined) { ev.preventDefault(); semana[dia][+t.dataset.ri].preps.splice(+t.dataset.rp, 1); renderSemana(); }
+  });
+  fC.elements.metaKcal.addEventListener('input', renderSemana);
+  fC.elements.periodo.addEventListener('change', renderCheck);
+  fC.elements.modalidade.addEventListener('change', renderCheck);
+
+  // Verificações de conformidade com parâmetros do PNAE
+  function renderCheck() {
+    const periodo = fC.elements.periodo.value;
+    const modalidade = fC.elements.modalidade.value;
+    let diasFruta = 0, diasHort = 0, gFLV = 0, temUltra = false, temAcucar = false;
+    DB.DIAS.forEach(dia => {
+      let f = false, h = false;
+      (semana[dia] || []).forEach(r => (r.preps || []).forEach(pid => {
+        const p = DB.get('preparacoes', pid); if (!p) return;
+        (p.ingredientes || []).forEach(i => {
+          const prod = DB.get('produtos', i.produtoId); if (!prod) return;
+          if (prod.grupo === 'fruta' && prod.classe === 'innatura') { f = true; gFLV += +i.perCapita; }
+          if (prod.grupo === 'hortalica') { h = true; gFLV += +i.perCapita; }
+          if (prod.classe === 'ultra') temUltra = true;
+          if (prod.grupo === 'acucar') temAcucar = true;
+        });
+      }));
+      if (f) diasFruta++; if (h) diasHort++;
+    });
+    const req = periodo === 'integral' ? { fruta: 4, hort: 5, g: 520 } : { fruta: 2, hort: 3, g: 280 };
+    const item = (ok, txt) => `<div>${ok ? '✅' : '⚠️'} ${txt}</div>`;
+    let h = '<div class="alert info"><b>Checagem do cardápio (parâmetros PNAE — conferir Res. CD/FNDE vigente):</b>';
+    h += item(diasFruta >= req.fruta, `Frutas in natura em ${diasFruta} dia(s) — mínimo ${req.fruta} dias/semana (${periodo}).`);
+    h += item(diasHort >= req.hort, `Legumes/verduras em ${diasHort} dia(s) — mínimo ${req.hort} dias/semana.`);
+    h += item(gFLV >= req.g, `Frutas, legumes e verduras: ${num(gFLV, 0)} g/aluno/semana — mínimo ${req.g} g.`);
+    h += item(!temUltra, temUltra ? 'Há ultraprocessado no cardápio — verificar se é permitido.' : 'Sem ultraprocessados.');
+    if (modalidade === 'creche') h += item(!temAcucar, temAcucar ? 'Creche: há açúcar no cardápio — vedado até 3 anos.' : 'Sem açúcar adicionado (creche).');
+    $('#checkCard').innerHTML = h + '</div>';
+  }
+
+  function limparCard() {
+    fC.reset(); fC.elements.id.value = ''; fC.elements.modalidade.value = 'fundamental'; semana = semanaVazia();
+    const d = new Date(); d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
+    fC.elements.dataInicio.value = new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    $('#tituloCard').textContent = 'Novo cardápio semanal'; preencherEscolas([]); renderSemana();
+  }
+  function preencherEscolas(sel) {
+    fC.elements.escolaIds.innerHTML = DB.list('escolas').filter(e => e.ativo !== false)
+      .map(e => `<option value="${e.id}" ${sel.includes(e.id) ? 'selected' : ''}>${esc(e.nome)}</option>`).join('');
+  }
+  $('#limparCard').onclick = limparCard;
+
+  fC.addEventListener('submit', ev => {
+    ev.preventDefault();
+    const o = UI.formData(fC);
+    o.escolaIds = [...fC.elements.escolaIds.selectedOptions].map(x => x.value);
+    if (new Date(o.dataInicio + 'T12:00:00').getDay() !== 1 && !confirm('A data de início não é uma segunda-feira. Salvar assim mesmo?')) return;
+    o.semanas = +o.semanas || 1; o.metaKcal = +o.metaKcal || 0; o.metaPtn = +o.metaPtn || 0;
+    o.dias = JSON.parse(JSON.stringify(semana));
+    if (o.id) DB.update('cardapios', o.id, o); else { delete o.id; DB.insert('cardapios', o); }
+    UI.toast('Cardápio salvo.'); limparCard(); renderCards();
+  });
+
+  function renderCards() {
+    let h = '<thead><tr><th>Cardápio</th><th>Início</th><th>Semanas</th><th>Modalidade</th><th>Período</th><th>Escolas</th><th></th></tr></thead><tbody>';
+    DB.list('cardapios').slice().sort((a, b) => b.dataInicio.localeCompare(a.dataInicio)).forEach(c => {
+      const esc_ = (c.escolaIds || []).length ? c.escolaIds.map(id => (DB.get('escolas', id) || {}).nome).join(', ') : 'Todas';
+      h += `<tr><td>${esc(c.nome)}</td><td>${data(c.dataInicio)}</td><td>${c.semanas || 1}</td><td>${(DB.MODALIDADES[c.modalidade] || {}).nome || ''}</td>
+        <td>${c.periodo}</td><td><small>${esc(esc_)}</small></td>
+        <td><button class="sm secondary" data-ed="${c.id}">Editar</button> <button class="sm secondary" data-dup="${c.id}">Duplicar</button>
+        <button class="sm danger" data-del="${c.id}">Excluir</button></td></tr>`;
+    });
+    $('#tblCards').innerHTML = h + '</tbody>';
+    $('#selVer').innerHTML = UI.options(DB.list('cardapios').slice().sort((a, b) => b.dataInicio.localeCompare(a.dataInicio)), 'id', c => `${c.nome} (${data(c.dataInicio)})`, $('#selVer').value, 'Selecione...');
+  }
+  $('#tblCards').onclick = ev => {
+    const d = ev.target.dataset;
+    if (d.ed || d.dup) {
+      const c = JSON.parse(JSON.stringify(DB.get('cardapios', d.ed || d.dup)));
+      if (d.dup) { c.id = ''; c.nome += ' (cópia)'; const dt = new Date(c.dataInicio + 'T12:00:00'); dt.setDate(dt.getDate() + 7 * (c.semanas || 1)); c.dataInicio = dt.toISOString().slice(0, 10); }
+      fC.reset(); UI.fillForm(fC, Object.assign({}, c, { escolaIds: '' })); semana = c.dias || semanaVazia();
+      preencherEscolas(c.escolaIds || []);
+      $('#tituloCard').textContent = d.dup ? 'Novo cardápio (cópia)' : 'Editar cardápio'; renderSemana(); fC.scrollIntoView();
+    }
+    if (d.del && confirm('Excluir cardápio?')) { DB.remove('cardapios', d.del); renderCards(); }
+  };
+
+  /* ================= VISUALIZAR ================= */
+  function renderVer() {
+    const c = DB.get('cardapios', $('#selVer').value);
+    if (!c) { $('#areaVer').innerHTML = '<div class="card muted">Selecione um cardápio.</div>'; return; }
+    let h = `<div class="card"><h2>${esc(c.nome)}</h2>
+      <div class="muted">${esc(cfg.entidade)} · ${esc(cfg.municipio)} · Início: ${data(c.dataInicio)} · ${(DB.MODALIDADES[c.modalidade] || {}).nome || ''} · Período ${c.periodo}</div>
+      <div class="table-wrap" style="margin-top:.6rem"><table><thead><tr><th>Dia</th><th>Refeição</th><th>Preparações</th><th class="num">kcal</th><th class="num">PTN (g)</th><th class="num">CHO (g)</th><th class="num">LIP (g)</th></tr></thead><tbody>`;
+    let sem = { kcal: 0, ptn: 0, custo: 0 };
+    DB.DIAS.forEach(dia => {
+      (c.dias[dia] || []).forEach((r, i) => {
+        const tot = { kcal: 0, ptn: 0, cho: 0, lip: 0 };
+        const nomes = (r.preps || []).map(pid => {
+          const p = DB.get('preparacoes', pid); if (!p) return '';
+          const k = DB.calcFicha(p); tot.kcal += k.kcal; tot.ptn += k.ptn; tot.cho += k.cho; tot.lip += k.lip; sem.custo += k.custo;
+          return esc(p.nome);
+        }).filter(Boolean).join(', ');
+        sem.kcal += tot.kcal; sem.ptn += tot.ptn;
+        h += `<tr><td>${i === 0 ? '<b>' + DB.DIAS_NOME[dia] + '</b>' : ''}</td><td>${esc(r.tipo)}</td><td>${nomes || '-'}</td>
+          <td class="num">${num(tot.kcal, 0)}</td><td class="num">${num(tot.ptn, 1)}</td><td class="num">${num(tot.cho, 1)}</td><td class="num">${num(tot.lip, 1)}</td></tr>`;
+      });
+    });
+    h += `<tr class="total"><td colspan="3">Média diária</td><td class="num">${num(sem.kcal / 5, 0)}</td><td class="num">${num(sem.ptn / 5, 1)}</td><td colspan="2">Custo médio/aluno/dia: ${money(sem.custo / 5)}</td></tr>`;
+    h += `</tbody></table></div>${c.obs ? `<p><b>Obs.:</b> ${esc(c.obs)}</p>` : ''}
+      <p style="margin-top:2rem">_____________________________________<br>Nutricionista Responsável Técnica — CRN nº ________</p></div>`;
+    $('#areaVer').innerHTML = h;
+  }
+  $('#selVer').onchange = renderVer;
+  $('#btnPrint').onclick = () => window.print();
+
+  limparFicha(); renderFichas(); limparCard(); renderCards(); renderVer();
+}
+</script>
+</body>
+</html>

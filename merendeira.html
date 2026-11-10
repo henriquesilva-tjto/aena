@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AENA · Merendeira</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main>
+  <div class="page-head">
+    <div>
+      <h1>Registro diário da cozinha</h1>
+      <div class="muted">Refeições servidas e saída de produtos e insumos.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="field lg"><label>Escola</label><select id="selEscola"></select></div>
+      <div class="field sm"><label>Data</label><input type="date" id="selData"></div>
+    </div>
+    <div id="cardapioDia"></div>
+  </div>
+
+  <div class="card">
+    <h2>Registrar refeição servida</h2>
+    <form id="fReg">
+      <div class="row">
+        <div class="field"><label>Turno</label>
+          <select name="turno"><option>Matutino</option><option>Vespertino</option><option>Noturno</option><option>Integral</option></select></div>
+        <div class="field"><label>Refeição</label>
+          <select name="tipo"><option>Desjejum</option><option selected>Lanche</option><option>Almoço</option><option>Lanche da tarde</option><option>Jantar</option></select></div>
+        <div class="field sm"><label>Alunos atendidos</label><input type="number" min="0" name="alunos" required></div>
+        <div class="field sm"><label>Repetições (aprox.)</label><input type="number" min="0" name="repeticoes" value="0"></div>
+      </div>
+      <div class="row">
+        <div class="field lg"><label>O que foi servido</label><input name="servido" placeholder="Preenchido pelo cardápio ou descreva"></div>
+        <div class="field"><label>Aceitação</label>
+          <select name="aceitacao"><option value="">—</option><option>Ótima</option><option>Boa</option><option>Regular</option><option>Ruim</option></select></div>
+      </div>
+
+      <h3 style="margin-top:.8rem">Produtos e insumos utilizados</h3>
+      <div class="actions no-print" style="margin-bottom:.4rem">
+        <button type="button" class="secondary sm" id="btnSugerir">Calcular pelo cardápio do dia</button>
+        <button type="button" class="secondary sm" id="btnAdd">+ Produto</button>
+      </div>
+      <div class="table-wrap"><table id="tblItens"></table></div>
+
+      <div class="row" style="margin-top:.6rem"><div class="field"><label>Ocorrências (falta de produto, gás, água, substituição de cardápio...)</label><textarea name="ocorrencia"></textarea></div></div>
+      <button type="submit">Salvar registro</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="page-head"><h2>Registros da escola</h2><input type="month" id="selMes"></div>
+    <div class="table-wrap"><table id="tblRegs"></table></div>
+  </div>
+</main>
+
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/ui.js"></script>
+<script>
+const sess = UI.init();
+if (sess) {
+  const { $, esc, num, data } = UI;
+  const fR = $('#fReg');
+  let itens = [];
+
+  // Merendeira vê só a sua escola; diretor/admin escolhem
+  const escolas = DB.list('escolas').filter(e => e.ativo !== false);
+  const minhas = sess.papel === 'merendeira' && sess.escolaId ? escolas.filter(e => e.id === sess.escolaId) : escolas;
+  $('#selEscola').innerHTML = UI.options(minhas, 'id', e => e.nome, sess.escolaId || (minhas[0] || {}).id);
+  if (sess.papel === 'merendeira' && sess.escolaId) $('#selEscola').disabled = true;
+  if (!minhas.length) $('#cardapioDia').innerHTML = '<div class="alert bad">Nenhuma escola vinculada ao seu usuário. Procure o administrador.</div>';
+  $('#selData').value = UI.hoje();
+  $('#selData').max = UI.hoje();
+  $('#selMes').value = UI.hoje().slice(0, 7);
+
+  const escolaId = () => $('#selEscola').value;
+  const prods = () => DB.list('produtos').filter(p => p.ativo !== false).sort((a, b) => a.nome.localeCompare(b.nome));
+
+  function renderCardapio() {
+    const r = DB.cardapioDoDia(escolaId(), $('#selData').value);
+    if (!r) { $('#cardapioDia').innerHTML = '<div class="alert warn">Sem cardápio cadastrado para esta data. Registre o que foi servido manualmente.</div>'; return; }
+    const h = r.refeicoes.map(ref => `<div><b>${esc(ref.tipo)}:</b> ${(ref.preps || []).map(pid => esc((DB.get('preparacoes', pid) || {}).nome || '')).join(', ') || '-'}</div>`).join('');
+    $('#cardapioDia').innerHTML = `<div class="alert ok"><b>Cardápio do dia</b> — ${esc(r.cardapio.nome)}<br>${h || 'Sem preparações'}</div>`;
+  }
+
+  function renderItens() {
+    const opts = prods();
+    let h = '<thead><tr><th>Produto</th><th class="num">Quantidade</th><th>Un.</th><th class="num">Saldo em estoque</th><th></th></tr></thead><tbody>';
+    itens.forEach((it, i) => {
+      const p = DB.get('produtos', it.produtoId);
+      const saldo = p ? DB.estoque(p.id) : 0;
+      const falta = p && +it.quantidade > saldo;
+      h += `<tr><td><select data-i="${i}" data-k="produtoId">${UI.options(opts, 'id', x => x.nome, it.produtoId, 'Selecione...')}</select></td>
+        <td class="num"><input type="number" step="0.001" min="0" style="max-width:120px" data-i="${i}" data-k="quantidade" value="${it.quantidade}"></td>
+        <td>${p ? p.unidade : ''}</td><td class="num">${p ? `<span id="sd${i}" class="badge ${falta ? 'bad' : 'ok'}">${num(saldo, 3)}</span>` : ''}</td>
+        <td><button type="button" class="sm danger" data-rm="${i}">×</button></td></tr>`;
+    });
+    if (!itens.length) h += '<tr><td colspan="5" class="muted">Nenhum produto. Use “Calcular pelo cardápio” ou “+ Produto”.</td></tr>';
+    $('#tblItens').innerHTML = h + '</tbody>';
+  }
+  $('#tblItens').addEventListener('change', ev => { const t = ev.target; if (t.dataset.i === undefined) return; itens[+t.dataset.i][t.dataset.k] = t.value; if (t.tagName === 'SELECT') renderItens(); else atualizaSaldo(+t.dataset.i); });
+  $('#tblItens').addEventListener('input', ev => { const t = ev.target; if (t.dataset.i === undefined || t.tagName === 'SELECT') return; itens[+t.dataset.i][t.dataset.k] = t.value; atualizaSaldo(+t.dataset.i); });
+  function atualizaSaldo(i) {
+    const it = itens[i], b = $('#sd' + i); if (!b || !it.produtoId) return;
+    b.className = 'badge ' + (+it.quantidade > DB.estoque(it.produtoId) ? 'bad' : 'ok');
+  }
+  $('#tblItens').addEventListener('click', ev => { if (ev.target.dataset.rm !== undefined) { itens.splice(+ev.target.dataset.rm, 1); renderItens(); } });
+  $('#btnAdd').onclick = () => { itens.push({ produtoId: '', quantidade: '' }); renderItens(); };
+
+  // Sugere quantidades: per capita bruto da ficha técnica × alunos atendidos
+  $('#btnSugerir').onclick = () => {
+    const alunos = +fR.elements.alunos.value;
+    if (!alunos) return UI.toast('Informe primeiro o número de alunos atendidos.');
+    const r = DB.cardapioDoDia(escolaId(), $('#selData').value);
+    if (!r) return UI.toast('Sem cardápio para esta data.');
+    const tipo = fR.elements.tipo.value;
+    let refs = r.refeicoes.filter(x => x.tipo === tipo);
+    if (!refs.length) refs = r.refeicoes;
+    const soma = {}; const nomes = [];
+    refs.forEach(ref => (ref.preps || []).forEach(pid => {
+      const p = DB.get('preparacoes', pid); if (!p) return;
+      nomes.push(p.nome);
+      (p.ingredientes || []).forEach(i => {
+        const prod = DB.get('produtos', i.produtoId); if (!prod) return;
+        soma[prod.id] = (soma[prod.id] || 0) + DB.gramasParaUnidade(prod, i.perCapita * (i.fc || 1) * alunos);
+      });
+    }));
+    itens = Object.entries(soma).map(([produtoId, q]) => {
+      const p = DB.get('produtos', produtoId);
+      return { produtoId, quantidade: p.unidade === 'un' ? Math.ceil(q) : Math.round(q * 1000) / 1000 };
+    });
+    if (!fR.elements.servido.value) fR.elements.servido.value = nomes.join(', ');
+    renderItens();
+    UI.toast('Quantidades calculadas. Ajuste para o que foi realmente usado.');
+  };
+
+  fR.addEventListener('submit', ev => {
+    ev.preventDefault();
+    if (!escolaId()) return UI.toast('Selecione a escola.');
+    const o = UI.formData(fR);
+    o.alunos = +o.alunos || 0; o.repeticoes = +o.repeticoes || 0;
+    o.escolaId = escolaId(); o.data = $('#selData').value;
+    const validos = itens.filter(i => i.produtoId && +i.quantidade > 0);
+    const semSaldo = validos.filter(i => +i.quantidade > DB.estoque(i.produtoId) + 1e-9);
+    if (semSaldo.length && !confirm('Alguns produtos estão com quantidade maior que o saldo em estoque. Salvar assim mesmo? (o diretor será alertado)')) return;
+    if (!validos.length && !confirm('Nenhum produto informado. Salvar só a refeição?')) return;
+    const reg = DB.insert('refeicoes', o);
+    validos.forEach(i => DB.insert('saidas', { tipo: 'consumo', data: o.data, escolaId: o.escolaId, produtoId: i.produtoId, quantidade: +i.quantidade, refeicaoId: reg.id }));
+    UI.toast('Registro salvo.');
+    fR.reset(); itens = []; renderItens(); renderRegs();
+  });
+
+  function renderRegs() {
+    const m = $('#selMes').value;
+    const regs = DB.list('refeicoes').filter(r => r.escolaId === escolaId() && (!m || r.data.startsWith(m)))
+      .sort((a, b) => (b.data + b.criadoEm).localeCompare(a.data + a.criadoEm));
+    let tot = 0;
+    let h = '<thead><tr><th>Data</th><th>Turno</th><th>Refeição</th><th class="num">Alunos</th><th>Servido</th><th>Produtos baixados</th><th>Ocorrência</th><th>Por</th><th></th></tr></thead><tbody>';
+    regs.forEach(r => {
+      tot += r.alunos;
+      const sds = DB.list('saidas').filter(s => s.refeicaoId === r.id)
+        .map(s => { const p = DB.get('produtos', s.produtoId) || {}; return `${esc(p.nome)}: ${num(s.quantidade, 3)} ${p.unidade || ''}`; }).join('<br>');
+      const podeExcluir = sess.papel !== 'merendeira' || (r.criadoPor === sess.login && r.data === UI.hoje());
+      h += `<tr><td>${data(r.data)}</td><td>${esc(r.turno)}</td><td>${esc(r.tipo)}</td><td class="num">${r.alunos}</td><td>${esc(r.servido)}</td>
+        <td><small>${sds || '-'}</small></td><td><small>${esc(r.ocorrencia)}</small></td><td>${esc(r.criadoPor)}</td>
+        <td>${podeExcluir ? `<button class="sm danger" data-del="${r.id}">Excluir</button>` : ''}</td></tr>`;
+    });
+    h += `<tr class="total"><td colspan="3">Total de refeições no mês</td><td class="num">${tot}</td><td colspan="5"></td></tr>`;
+    $('#tblRegs').innerHTML = h + '</tbody>';
+  }
+  $('#tblRegs').onclick = ev => {
+    const id = ev.target.dataset.del;
+    if (!id || !confirm('Excluir este registro e devolver os produtos ao estoque?')) return;
+    DB.list('saidas').filter(s => s.refeicaoId === id).forEach(s => DB.remove('saidas', s.id));
+    DB.remove('refeicoes', id); renderRegs();
+  };
+
+  $('#selEscola').onchange = () => { renderCardapio(); renderRegs(); };
+  $('#selData').onchange = renderCardapio;
+  $('#selMes').onchange = renderRegs;
+  renderCardapio(); renderItens(); renderRegs();
+}
+</script>
+</body>
+</html>
