@@ -5,17 +5,13 @@
  * Esses valores NÃO são secretos: a proteção dos dados é feita pelas regras
  * do Firestore (arquivo firestore.rules) e pelo login.
  *
- * Enquanto estiver null, o sistema funciona no MODO LOCAL (dados só no navegador).
+ * Se for null, o sistema funciona no MODO LOCAL (dados só no navegador).
  */
-window.AENA_FIREBASE = null;
-
-/* Exemplo:
 window.AENA_FIREBASE = {
-  apiKey: "AIza...",
-  authDomain: "aena-novoacordo.firebaseapp.com",
-  projectId: "aena-novoacordo",
-  storageBucket: "aena-novoacordo.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:0000000000000000"
+  apiKey: "AIzaSyCT4UU24sINOagnBPLRlMy7HT0eFml0uSE",
+  authDomain: "aena-d83e8.firebaseapp.com",
+  projectId: "aena-d83e8",
+  storageBucket: "aena-d83e8.firebasestorage.app",
+  messagingSenderId: "346122986366",
+  appId: "1:346122986366:web:435c29409b0f0e6096c92f"
 };
-*/
