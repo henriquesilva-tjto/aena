@@ -108,12 +108,14 @@
   </section>
 </main>
 
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase.js"></script>
 <script src="js/db.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/ui.js"></script>
 <script>
-const sess = UI.init();
-if (sess) {
+UI.init({ cols: ['produtos', 'escolas', 'preparacoes', 'cardapios'] }).then(sess => {
+  if (!sess) return;
   const { $, esc, money, num, data } = UI;
   UI.tabs(document);
   const cfg = DB.load().config;
@@ -428,7 +430,7 @@ if (sess) {
   $('#btnPrint').onclick = () => window.print();
 
   limparFicha(); renderFichas(); limparCard(); renderCards(); renderVer();
-}
+});
 </script>
 </body>
 </html>

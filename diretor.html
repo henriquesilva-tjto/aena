@@ -191,8 +191,7 @@
   <section class="tab-panel" id="tBackup">
     <div class="card">
       <h2>Cópia de segurança</h2>
-      <div class="alert warn">Nesta versão os dados ficam gravados <b>neste navegador</b>. Faça backup semanal e guarde no Google Drive.
-        Para levar os dados para outro computador, exporte aqui e importe lá.</div>
+      <div class="alert info" id="infoBackup"></div>
       <div class="actions">
         <button id="btnExport">Exportar backup (.json)</button>
         <label class="btn secondary" style="color:var(--primary)">Importar backup<input type="file" id="fileImport" accept=".json" class="hidden"></label>
@@ -201,12 +200,14 @@
   </section>
 </main>
 
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase.js"></script>
 <script src="js/db.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/ui.js"></script>
 <script>
-const sess = UI.init();
-if (sess) {
+UI.init({ cols: ['produtos', 'escolas', 'fornecedores', 'entradas', 'saidas', 'repasses'] }).then(sess => {
+  if (!sess) return;
   const { $, esc, money, num, data } = UI;
   UI.tabs(document);
 
@@ -424,12 +425,28 @@ if (sess) {
   $('#tblRepasses').onclick = ev => { const d = ev.target.dataset.del; if (d && confirm('Excluir registro?')) { DB.remove('repasses', d); renderAll(); } };
 
   /* ----- Backup ----- */
-  $('#btnExport').onclick = () => UI.download(`aena_backup_${UI.hoje()}.json`, DB.exportJSON());
+  $('#infoBackup').innerHTML = DB.modo === 'firebase'
+    ? '<b>Modo online:</b> os dados ficam no Firebase. Mesmo assim, exporte um backup mensal e guarde no Google Drive. A importação <b>acrescenta/substitui</b> registros na nuvem (use apenas para migrar do modo local).'
+    : '<b>Modo local:</b> os dados ficam <b>neste navegador</b>. Faça backup semanal e guarde no Google Drive. Para levar os dados para outro computador, exporte aqui e importe lá.';
+  $('#btnExport').onclick = async () => {
+    UI.carregando(true);
+    try { UI.download(`aena_backup_${UI.hoje()}.json`, await DB.exportJSON()); }
+    catch (e) { alert('Erro ao exportar: ' + e.message); }
+    finally { UI.carregando(false); }
+  };
   $('#fileImport').onchange = ev => {
     const f = ev.target.files[0]; if (!f) return;
-    if (!confirm('Importar este backup vai SUBSTITUIR todos os dados deste navegador. Continuar?')) return;
+    const aviso = DB.modo === 'firebase'
+      ? 'Enviar este backup para a nuvem? Registros com o mesmo código serão substituídos e o estoque dos produtos do backup será recalculado.'
+      : 'Importar este backup vai SUBSTITUIR todos os dados deste navegador. Continuar?';
+    if (!confirm(aviso)) return;
     const r = new FileReader();
-    r.onload = () => { try { DB.importJSON(r.result); alert('Backup importado. Faça login novamente.'); Auth.logout(); } catch (e) { alert('Erro: ' + e.message); } };
+    r.onload = async () => {
+      try {
+        await DB.importJSON(r.result, (a, t) => UI.toast(`Enviando ${a} de ${t}...`));
+        alert('Backup importado.'); location.reload();
+      } catch (e) { alert('Erro: ' + e.message); }
+    };
     r.readAsText(f);
   };
 
@@ -439,7 +456,7 @@ if (sess) {
   }
   resetEntrada();
   renderAll();
-}
+});
 </script>
 </body>
 </html>

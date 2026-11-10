@@ -1,7 +1,7 @@
 /* AENA - Autenticação
- * Senhas guardadas como hash SHA-256 com "sal" individual. Sessão expira em 8 horas.
- * ATENÇÃO: em site estático (GitHub Pages) o login protege o uso cotidiano,
- * mas não substitui autenticação em servidor. Ver README.
+ * Modo FIREBASE: Firebase Authentication + perfil em usuarios/{uid}; permissões validadas
+ * pelas regras do Firestore (firestore.rules).
+ * Modo LOCAL: hash SHA-256 com sal no navegador.
  */
 (function () {
   const SESSION_KEY = 'aena_session';
@@ -74,6 +74,8 @@
   }
 
   const Auth = {
+    _sess: null,
+
     // Páginas permitidas por perfil
     ACESSO: {
       'painel.html':        ['admin', 'secretaria', 'nutricionista', 'diretor'],
@@ -84,14 +86,179 @@
       'legislacao.html':    ['admin', 'secretaria', 'nutricionista', 'diretor', 'merendeira']
     },
 
+    online() { return !!(window.FB && FB.enabled); },
+
     paginaInicial(papel) {
       return { merendeira: 'merendeira.html', nutricionista: 'nutricionista.html', diretor: 'diretor.html' }[papel] || 'painel.html';
     },
 
+    validaSenha(s) {
+      if (!s || s.length < 8) return 'A senha deve ter pelo menos 8 caracteres.';
+      if (!/[0-9]/.test(s) || !/[a-zA-Z]/.test(s)) return 'Use letras e números.';
+      return '';
+    },
+
+    /* ============ Sessão ============ */
+
+    // Aguarda o estado de login (Firebase) e carrega o perfil do usuário
+    async ready() {
+      if (!this.online()) { DB.load(); return this.session(); }
+      await FB.load();
+      const user = await new Promise(res => { const off = FB.au.onAuthStateChanged(FB.auth, u => { off(); res(u); }); });
+      this._sess = user ? await this._perfil(user) : null;
+      return this._sess;
+    },
+
+    async _perfil(user) {
+      const { fs, db } = FB;
+      const snap = await fs.getDoc(fs.doc(db, 'usuarios', user.uid));
+      if (!snap.exists()) return null;
+      const u = snap.data();
+      return { userId: user.uid, login: u.login, nome: u.nome, papel: u.papel, escolaId: u.escolaId || '',
+        ativo: u.ativo !== false, trocarSenha: !!u.trocarSenha, email: user.email };
+    },
+
+    session() {
+      if (this.online()) return this._sess;
+      try {
+        const s = JSON.parse(sessionStorage.getItem(SESSION_KEY));
+        if (s && s.exp > Date.now()) return s;
+      } catch (e) { /* ignora */ }
+      return null;
+    },
+
+    async login(login, senha) {
+      if (this.online()) {
+        try {
+          await FB.load();
+          const cred = await FB.au.signInWithEmailAndPassword(FB.auth, FB.loginParaEmail(login), senha);
+          const s = await this._perfil(cred.user);
+          if (!s || !s.ativo) { await FB.au.signOut(FB.auth); return { ok: false, msg: s ? 'Usuário desativado.' : 'Usuário sem perfil cadastrado. Procure o administrador.' }; }
+          this._sess = s;
+          FB.fs.updateDoc(FB.fs.doc(FB.db, 'usuarios', s.userId), { ultimoAcesso: new Date().toISOString() }).catch(() => {});
+          return { ok: true, user: s, trocarSenha: s.trocarSenha };
+        } catch (e) {
+          return { ok: false, msg: FB.traduzErro(e) };
+        }
+      }
+      return this._loginLocal(login, senha);
+    },
+
+    async logout() {
+      if (this.online() && FB.auth) await FB.au.signOut(FB.auth);
+      sessionStorage.removeItem(SESSION_KEY);
+      location.href = 'index.html';
+    },
+
+    // Protege a página atual. Retorna a sessão ou redireciona.
+    async guard() {
+      const pagina = location.pathname.split('/').pop() || 'index.html';
+      const s = await this.ready();
+      if (!s) { location.replace('index.html?volta=' + encodeURIComponent(pagina)); return null; }
+      if (!this.online()) {
+        const u = DB.get('usuarios', s.userId);
+        if (!u || !u.ativo) { await this.logout(); return null; }
+        s.trocarSenha = !!u.trocarSenha; s.escolaId = u.escolaId || '';
+      }
+      if (!s.ativo && this.online()) { await this.logout(); return null; }
+      if (s.trocarSenha) { location.replace('index.html?trocar=1'); return null; }
+      const permitidos = this.ACESSO[pagina];
+      if (permitidos && !permitidos.includes(s.papel)) { location.replace(this.paginaInicial(s.papel)); return null; }
+      return s;
+    },
+
+    /* ============ Senhas ============ */
+
+    // Troca obrigatória no primeiro acesso (usuário acabou de digitar a senha)
+    async trocarSenhaInicial(nova) {
+      const s = this.session();
+      if (this.online()) {
+        await FB.au.updatePassword(FB.auth.currentUser, nova);
+        await FB.fs.updateDoc(FB.fs.doc(FB.db, 'usuarios', s.userId), { trocarSenha: false });
+        s.trocarSenha = false;
+        return;
+      }
+      await this.setSenha(s.userId, nova);
+    },
+
+    async alterarSenha(atual, nova) {
+      const s = this.session();
+      if (this.online()) {
+        const user = FB.auth.currentUser;
+        try {
+          await FB.au.reauthenticateWithCredential(user, FB.au.EmailAuthProvider.credential(user.email, atual));
+        } catch (e) { throw new Error('Senha atual incorreta.'); }
+        await FB.au.updatePassword(user, nova);
+        return;
+      }
+      if (!(await this.conferirSenha(s.userId, atual))) throw new Error('Senha atual incorreta.');
+      await this.setSenha(s.userId, nova);
+    },
+
+    /* ============ Administração de usuários ============ */
+
+    // Cria usuário (admin). No Firebase cria o login no Authentication e o perfil no Firestore.
+    async criarUsuario(dados, senha) {
+      if (this.online()) {
+        const sec = await FB.secundario();
+        let cred;
+        try { cred = await FB.au.createUserWithEmailAndPassword(sec, FB.loginParaEmail(dados.login), senha); }
+        catch (e) { throw new Error(FB.traduzErro(e)); }
+        await FB.au.signOut(sec);
+        return DB.insert('usuarios', Object.assign({}, dados, { id: cred.user.uid, trocarSenha: true }));
+      }
+      const u = DB.insert('usuarios', Object.assign({}, dados));
+      await this.setSenha(u.id, senha);
+      DB.update('usuarios', u.id, { trocarSenha: true });
+      return u;
+    },
+
+    // Redefinição pelo admin. Firebase: só por e-mail (logins sem e-mail: criar novo login).
+    async redefinirSenha(userId, nova) {
+      const u = DB.get('usuarios', userId);
+      if (this.online()) {
+        const email = FB.loginParaEmail(u.login);
+        if (!FB.emailReal(email)) throw new Error('No modo online, a senha de login sem e-mail não pode ser redefinida pelo sistema. Desative este usuário e crie um novo login (ou use um e-mail real como login).');
+        await FB.au.sendPasswordResetEmail(FB.auth, email);
+        return 'email';
+      }
+      await this.setSenha(userId, nova);
+      DB.update('usuarios', userId, { trocarSenha: true });
+      return 'ok';
+    },
+
+    /* ============ Primeira configuração (Firebase) ============ */
+    async precisaSetup() {
+      if (!this.online()) return false;
+      await FB.load();
+      const snap = await FB.fs.getDoc(FB.fs.doc(FB.db, 'config', 'bootstrap'));
+      return !snap.exists();
+    },
+
+    async setupAdmin(nome, login, senha, semear) {
+      await FB.load();
+      const { fs, db, au, auth } = FB;
+      let cred;
+      try { cred = await au.createUserWithEmailAndPassword(auth, FB.loginParaEmail(login), senha); }
+      catch (e) {
+        if (e.code === 'auth/email-already-in-use') cred = await au.signInWithEmailAndPassword(auth, FB.loginParaEmail(login), senha);
+        else throw new Error(FB.traduzErro(e));
+      }
+      const uidAdm = cred.user.uid;
+      const b = fs.writeBatch(db);
+      b.set(fs.doc(db, 'usuarios', uidAdm), { login: login.toLowerCase(), nome, papel: 'admin', escolaId: '', ativo: true,
+        trocarSenha: false, criadoEm: new Date().toISOString() });
+      b.set(fs.doc(db, 'config', 'bootstrap'), { em: new Date().toISOString(), por: uidAdm });
+      await b.commit();
+      this._sess = await this._perfil(cred.user);
+      if (semear) await DB.semearFirebase();
+    },
+
+    /* ============ Modo local ============ */
     async hash(senha, s) { return sha256(s + ':' + senha); },
 
-    // Cria usuários padrão na primeira execução
     async garantirUsuarios() {
+      if (this.online()) return;
       const d = DB.load();
       if (d.usuarios.length) return;
       const padrao = [
@@ -112,13 +279,11 @@
       DB.save();
     },
 
-    async login(login, senha) {
+    async _loginLocal(login, senha) {
       await this.garantirUsuarios();
       const u = DB.list('usuarios').find(x => x.login.toLowerCase() === String(login).trim().toLowerCase());
       if (!u || !u.ativo) return { ok: false, msg: 'Usuário ou senha inválidos.' };
-      if (u.bloqueadoAte && Date.now() < u.bloqueadoAte) {
-        return { ok: false, msg: 'Muitas tentativas. Tente novamente em alguns minutos.' };
-      }
+      if (u.bloqueadoAte && Date.now() < u.bloqueadoAte) return { ok: false, msg: 'Muitas tentativas. Tente novamente em alguns minutos.' };
       const h = await this.hash(senha, u.sal);
       if (h !== u.senha) {
         u.falhas = (u.falhas || 0) + 1;
@@ -128,23 +293,10 @@
       }
       u.falhas = 0; u.bloqueadoAte = 0; u.ultimoAcesso = new Date().toISOString();
       DB.save();
-      const sess = { userId: u.id, login: u.login, nome: u.nome, papel: u.papel, escolaId: u.escolaId || '',
-        exp: Date.now() + SESSION_HORAS * 3600 * 1000 };
+      const sess = { userId: u.id, login: u.login, nome: u.nome, papel: u.papel, escolaId: u.escolaId || '', ativo: true,
+        trocarSenha: !!u.trocarSenha, exp: Date.now() + SESSION_HORAS * 3600 * 1000 };
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
       return { ok: true, user: u, trocarSenha: !!u.trocarSenha };
-    },
-
-    session() {
-      try {
-        const s = JSON.parse(sessionStorage.getItem(SESSION_KEY));
-        if (s && s.exp > Date.now()) return s;
-      } catch (e) { /* ignora */ }
-      return null;
-    },
-
-    logout() {
-      sessionStorage.removeItem(SESSION_KEY);
-      location.href = 'index.html';
     },
 
     async setSenha(userId, nova) {
@@ -159,29 +311,6 @@
     async conferirSenha(userId, senha) {
       const u = DB.get('usuarios', userId);
       return !!u && (await this.hash(senha, u.sal)) === u.senha;
-    },
-
-    validaSenha(s) {
-      if (!s || s.length < 8) return 'A senha deve ter pelo menos 8 caracteres.';
-      if (!/[0-9]/.test(s) || !/[a-zA-Z]/.test(s)) return 'Use letras e números.';
-      return '';
-    },
-
-    // Protege a página atual. Retorna a sessão ou redireciona para o login.
-    guard() {
-      const pagina = location.pathname.split('/').pop() || 'index.html';
-      const s = this.session();
-      if (!s) { location.replace('index.html?volta=' + encodeURIComponent(pagina)); return null; }
-      const u = DB.get('usuarios', s.userId);
-      if (!u || !u.ativo) { this.logout(); return null; }
-      if (u.trocarSenha) { location.replace('index.html?trocar=1'); return null; }
-      const permitidos = this.ACESSO[pagina];
-      if (permitidos && !permitidos.includes(s.papel)) {
-        location.replace(this.paginaInicial(s.papel));
-        return null;
-      }
-      s.escolaId = u.escolaId || '';
-      return s;
     }
   };
 

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AENA · Configuração inicial</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="card" style="max-width:520px;width:100%">
+    <div class="logo" style="text-align:center"><b style="font-size:2rem;color:var(--primary)">AENA</b>
+      <div class="muted">Configuração inicial do modo online</div></div>
+
+    <div id="naoConfig" class="alert bad hidden">O Firebase ainda não foi configurado em <code>js/firebase-config.js</code>. Veja o passo a passo no README.</div>
+    <div id="jaConfig" class="alert ok hidden">Este sistema já foi configurado. <a href="index.html">Ir para o login</a>.</div>
+
+    <form id="fSetup" class="hidden" method="post" action="javascript:void(0)">
+      <div class="alert info">Crie a conta do <b>administrador</b>. Só é possível fazer isso uma vez; depois, os demais usuários são criados pelo administrador em <i>Usuários</i>.</div>
+      <div class="row"><div class="field"><label>Nome completo</label><input name="nome" required></div></div>
+      <div class="row"><div class="field"><label>Login (ou e-mail — recomendado para o admin, permite recuperar a senha)</label><input name="login" required></div></div>
+      <div class="row">
+        <div class="field"><label>Senha</label><input name="senha" type="password" autocomplete="new-password" required></div>
+        <div class="field"><label>Repita a senha</label><input name="senha2" type="password" autocomplete="new-password" required></div>
+      </div>
+      <div class="row"><label style="display:flex;gap:.4rem;align-items:center"><input type="checkbox" name="semear" checked> Criar produtos e escolas de exemplo</label></div>
+      <div id="msg" class="alert bad hidden"></div>
+      <button type="submit" style="width:100%">Criar administrador</button>
+    </form>
+
+    <div id="importar" class="hidden">
+      <div class="alert ok">Administrador criado.</div>
+      <p>Se você já usou o AENA no <b>modo local</b>, pode enviar o backup (.json) para a nuvem agora. Os usuários do backup <b>não</b> são importados (crie-os em <i>Usuários</i>).</p>
+      <div class="actions">
+        <label class="btn secondary" style="color:var(--primary)">Importar backup do modo local<input type="file" id="arq" accept=".json" class="hidden"></label>
+        <a class="btn" href="usuarios.html">Continuar</a>
+      </div>
+      <div id="prog" class="muted" style="margin-top:.5rem"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase.js"></script>
+<script src="js/db.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/ui.js"></script>
+<script>
+(async function () {
+  if (!Auth.online()) { UI.$('#naoConfig').classList.remove('hidden'); return; }
+  try {
+    if (!(await Auth.precisaSetup())) { UI.$('#jaConfig').classList.remove('hidden'); return; }
+  } catch (e) {
+    UI.$('#naoConfig').textContent = 'Erro ao conectar ao Firebase: ' + (e.message || e) + '. Confira o firebase-config.js e se o Firestore foi criado.';
+    UI.$('#naoConfig').classList.remove('hidden'); return;
+  }
+  const f = UI.$('#fSetup');
+  f.classList.remove('hidden');
+  f.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const o = UI.formData(f), m = UI.$('#msg');
+    let e = Auth.validaSenha(o.senha);
+    if (!e && o.senha !== o.senha2) e = 'As senhas não conferem.';
+    if (!e && !/^[a-zA-Z0-9._@-]{3,60}$/.test(o.login)) e = 'Login inválido (use letras, números, ponto, hífen ou um e-mail).';
+    if (e) { m.textContent = e; m.classList.remove('hidden'); return; }
+    f.querySelector('button').disabled = true;
+    try {
+      await Auth.setupAdmin(o.nome, o.login, o.senha, o.semear);
+      f.classList.add('hidden'); UI.$('#importar').classList.remove('hidden');
+    } catch (x) {
+      m.textContent = 'Erro: ' + (x.message || x) + ' — confira se as regras do Firestore (firestore.rules) foram publicadas.';
+      m.classList.remove('hidden'); f.querySelector('button').disabled = false;
+    }
+  });
+  UI.$('#arq').onchange = ev => {
+    const file = ev.target.files[0]; if (!file) return;
+    const r = new FileReader();
+    r.onload = async () => {
+      try {
+        await DB.init({ cols: [] });
+        await DB.importJSON(r.result, (a, t) => UI.$('#prog').textContent = `Enviando ${a} de ${t} registros...`);
+        UI.$('#prog').textContent = 'Backup importado com sucesso.';
+      } catch (x) { UI.$('#prog').textContent = 'Erro na importação: ' + (x.message || x); }
+    };
+    r.readAsText(file);
+  };
+})();
+</script>
+</body>
+</html>

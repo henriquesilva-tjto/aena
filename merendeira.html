@@ -58,12 +58,15 @@
   </div>
 </main>
 
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase.js"></script>
 <script src="js/db.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/ui.js"></script>
 <script>
-const sess = UI.init();
-if (sess) {
+function mesAtual() { const h = UI.hoje(); return [h.slice(0, 8) + '01', h.slice(0, 8) + '31']; }
+UI.init({ cols: ['produtos', 'escolas', 'preparacoes', 'cardapios'], periodo: { refeicoes: mesAtual() } }).then(sess => {
+  if (!sess) return;
   const { $, esc, num, data } = UI;
   const fR = $('#fReg');
   let itens = [];
@@ -149,8 +152,8 @@ if (sess) {
     const semSaldo = validos.filter(i => +i.quantidade > DB.estoque(i.produtoId) + 1e-9);
     if (semSaldo.length && !confirm('Alguns produtos estão com quantidade maior que o saldo em estoque. Salvar assim mesmo? (o diretor será alertado)')) return;
     if (!validos.length && !confirm('Nenhum produto informado. Salvar só a refeição?')) return;
-    const reg = DB.insert('refeicoes', o);
-    validos.forEach(i => DB.insert('saidas', { tipo: 'consumo', data: o.data, escolaId: o.escolaId, produtoId: i.produtoId, quantidade: +i.quantidade, refeicaoId: reg.id }));
+    o.itens = validos.map(i => ({ produtoId: i.produtoId, quantidade: +i.quantidade }));
+    DB.insert('refeicoes', o);
     UI.toast('Registro salvo.');
     fR.reset(); itens = []; renderItens(); renderRegs();
   });
@@ -163,7 +166,7 @@ if (sess) {
     let h = '<thead><tr><th>Data</th><th>Turno</th><th>Refeição</th><th class="num">Alunos</th><th>Servido</th><th>Produtos baixados</th><th>Ocorrência</th><th>Por</th><th></th></tr></thead><tbody>';
     regs.forEach(r => {
       tot += r.alunos;
-      const sds = DB.list('saidas').filter(s => s.refeicaoId === r.id)
+      const sds = (r.itens || [])
         .map(s => { const p = DB.get('produtos', s.produtoId) || {}; return `${esc(p.nome)}: ${num(s.quantidade, 3)} ${p.unidade || ''}`; }).join('<br>');
       const podeExcluir = sess.papel !== 'merendeira' || (r.criadoPor === sess.login && r.data === UI.hoje());
       h += `<tr><td>${data(r.data)}</td><td>${esc(r.turno)}</td><td>${esc(r.tipo)}</td><td class="num">${r.alunos}</td><td>${esc(r.servido)}</td>
@@ -176,15 +179,18 @@ if (sess) {
   $('#tblRegs').onclick = ev => {
     const id = ev.target.dataset.del;
     if (!id || !confirm('Excluir este registro e devolver os produtos ao estoque?')) return;
-    DB.list('saidas').filter(s => s.refeicaoId === id).forEach(s => DB.remove('saidas', s.id));
-    DB.remove('refeicoes', id); renderRegs();
+    DB.remove('refeicoes', id); renderRegs(); renderItens();
   };
 
   $('#selEscola').onchange = () => { renderCardapio(); renderRegs(); };
   $('#selData').onchange = renderCardapio;
-  $('#selMes').onchange = renderRegs;
+  $('#selMes').onchange = async () => {
+    const m = $('#selMes').value;
+    if (m) { UI.carregando(true); try { await DB.fetch('refeicoes', [m + '-01', m + '-31']); } finally { UI.carregando(false); } }
+    renderRegs();
+  };
   renderCardapio(); renderItens(); renderRegs();
-}
+});
 </script>
 </body>
 </html>

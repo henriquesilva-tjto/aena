@@ -22,7 +22,7 @@
         <input type="hidden" name="id">
         <div class="row">
           <div class="field"><label>Nome completo</label><input name="nome" required></div>
-          <div class="field sm"><label>Usuário (login)</label><input name="login" required pattern="[a-zA-Z0-9._-]{3,30}" title="3 a 30 caracteres: letras, números, ponto, hífen"></div>
+          <div class="field sm"><label>Usuário (login)</label><input name="login" required pattern="[a-zA-Z0-9._@\-]{3,60}" title="Letras, números, ponto, hífen, ou um e-mail"></div>
           <div class="field"><label>Perfil</label><select name="papel"></select></div>
           <div class="field"><label>Escola (merendeira)</label><select name="escolaId"></select></div>
         </div>
@@ -30,7 +30,7 @@
           <div class="field sm"><label>Senha inicial</label><input name="senha" type="text" placeholder="Em branco = manter"></div>
           <label style="display:flex;gap:.4rem;align-items:center"><input type="checkbox" name="ativo" checked> Ativo</label>
         </div>
-        <small class="muted">O usuário será obrigado a trocar a senha inicial no primeiro acesso.</small>
+        <small class="muted">O usuário será obrigado a trocar a senha inicial no primeiro acesso. No modo online, prefira usar o e-mail como login quando a pessoa tiver e-mail (permite recuperar a senha).</small>
         <div class="actions" style="margin-top:.6rem"><button type="submit">Salvar</button><button type="button" class="secondary" id="limparU">Limpar</button></div>
       </form>
     </div>
@@ -65,19 +65,21 @@
   </section>
 </main>
 
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase.js"></script>
 <script src="js/db.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/ui.js"></script>
 <script>
-const sess = UI.init();
-if (sess) {
+UI.init({ cols: ['usuarios', 'escolas'] }).then(async sess => {
+  if (!sess) return;
   const { $, esc, data } = UI;
   UI.tabs(document);
   const fU = $('#fU');
   fU.elements.papel.innerHTML = Object.entries(DB.PAPEIS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
   fU.elements.escolaId.innerHTML = UI.options(DB.list('escolas'), 'id', e => e.nome, '', '—');
 
-  function limpar() { fU.reset(); fU.elements.id.value = ''; fU.elements.ativo.checked = true; $('#tituloU').textContent = 'Novo usuário'; }
+  function limpar() { fU.reset(); fU.elements.login.readOnly = false; fU.elements.senha.placeholder = 'Em branco = manter'; fU.elements.id.value = ''; fU.elements.ativo.checked = true; $('#tituloU').textContent = 'Novo usuário'; }
   $('#limparU').onclick = limpar;
 
   fU.addEventListener('submit', async ev => {
@@ -90,10 +92,22 @@ if (sess) {
     const senha = o.senha; delete o.senha;
     if (!o.id && !senha) return UI.toast('Informe a senha inicial.');
     if (senha) { const e = Auth.validaSenha(senha); if (e) return UI.toast(e); }
-    let u;
-    if (o.id) u = DB.update('usuarios', o.id, o); else { delete o.id; u = DB.insert('usuarios', o); }
-    if (senha) { await Auth.setSenha(u.id, senha); DB.update('usuarios', u.id, { trocarSenha: true }); }
-    UI.toast('Usuário salvo.'); limpar(); render();
+    const btn = fU.querySelector('button[type=submit]'); btn.disabled = true;
+    try {
+      if (o.id) {
+        if (DB.modo === 'firebase') delete o.login; // login do Firebase não muda depois de criado
+        DB.update('usuarios', o.id, o);
+        if (senha) {
+          const r = await Auth.redefinirSenha(o.id, senha);
+          if (r === 'email') alert('Foi enviado um e-mail de redefinição de senha para o usuário.');
+        }
+      } else {
+        delete o.id;
+        await Auth.criarUsuario(o, senha);
+      }
+      UI.toast('Usuário salvo.'); limpar(); render();
+    } catch (e) { alert(e.message || e); }
+    finally { btn.disabled = false; }
   });
 
   function render() {
@@ -102,14 +116,21 @@ if (sess) {
       h += `<tr><td>${esc(u.nome)}</td><td>${esc(u.login)}</td><td>${DB.PAPEIS[u.papel]}</td><td>${esc((DB.get('escolas', u.escolaId) || {}).nome || '')}</td>
         <td>${u.ultimoAcesso ? data(u.ultimoAcesso) : '-'}</td>
         <td>${u.ativo ? '<span class="badge ok">Ativo</span>' : '<span class="badge bad">Inativo</span>'} ${u.trocarSenha ? '<span class="badge warn">Trocar senha</span>' : ''}</td>
-        <td><button class="sm secondary" data-ed="${u.id}">Editar</button></td></tr>`;
+        <td><button class="sm secondary" data-ed="${u.id}">Editar</button>
+          ${DB.modo === 'firebase' && FB.emailReal(FB.loginParaEmail(u.login)) ? `<button class="sm secondary" data-reset="${u.id}">Enviar e-mail de nova senha</button>` : ''}</td></tr>`;
     });
     $('#tblU').innerHTML = h + '</tbody>';
   }
   $('#tblU').onclick = ev => {
+    if (ev.target.dataset.reset) {
+      Auth.redefinirSenha(ev.target.dataset.reset).then(() => alert('E-mail de redefinição enviado.')).catch(e => alert(e.message));
+      return;
+    }
     const id = ev.target.dataset.ed; if (!id) return;
     const u = DB.get('usuarios', id); limpar();
     UI.fillForm(fU, { id: u.id, nome: u.nome, login: u.login, papel: u.papel, escolaId: u.escolaId || '', ativo: u.ativo });
+    fU.elements.login.readOnly = DB.modo === 'firebase';
+    fU.elements.senha.placeholder = DB.modo === 'firebase' ? (FB.emailReal(FB.loginParaEmail(u.login)) ? 'Use o botão de e-mail na lista' : 'Sem e-mail: não redefinível') : 'Em branco = manter';
     $('#tituloU').textContent = 'Editar usuário'; fU.scrollIntoView();
   };
 
@@ -124,17 +145,18 @@ if (sess) {
     const o = UI.formData(fC); const pc = {};
     Object.keys(o).forEach(k => { if (k.startsWith('pc_')) { pc[k.slice(3)] = +o[k]; delete o[k]; } });
     ['diasLetivos', 'alertaValidadeDias', 'metaAgriculturaFamiliar', 'minInNatura', 'limiteCulinario', 'limiteProcUltra'].forEach(k => o[k] = +o[k]);
-    Object.assign(DB.load().config, o, { perCapita: pc });
-    DB.logAction('alterou', 'config', '-'); DB.save(); UI.toast('Configurações salvas.');
+    DB.saveConfig(Object.assign(o, { perCapita: pc }))
+      .then(() => UI.toast('Configurações salvas.'))
+      .catch(e => alert('Erro ao salvar: ' + e.message));
   });
 
   /* Log */
-  const log = DB.list('log').slice(-300).reverse();
+  const log = await DB.fetchLog(300).catch(() => []);
   $('#tblLog').innerHTML = '<thead><tr><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Cadastro</th></tr></thead><tbody>' +
     log.map(l => `<tr><td>${new Date(l.em).toLocaleString('pt-BR')}</td><td>${esc(l.por)}</td><td>${esc(l.acao)}</td><td>${esc(l.col)}</td></tr>`).join('') + '</tbody>';
 
   limpar(); render();
-}
+});
 </script>
 </body>
 </html>

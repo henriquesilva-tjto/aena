@@ -1,7 +1,10 @@
 /* AENA - Alimentação Escolar Novo Acordo
- * Camada de dados. Nesta versão os dados ficam no navegador (localStorage).
- * Toda leitura/gravação passa por DB, para facilitar trocar depois por um
- * banco online (Firebase/Supabase/Google Sheets) sem mexer nas páginas.
+ * Camada de dados. Dois modos:
+ *  - LOCAL: tudo no navegador (localStorage) — usado quando o Firebase não está configurado.
+ *  - FIREBASE: Firestore na nuvem, compartilhado entre todos os computadores.
+ * As páginas usam sempre a mesma API (DB.list/get/insert/update/remove).
+ * Os dados ficam em memória após DB.init(); as gravações vão para o Firestore
+ * em segundo plano (com fila offline).
  */
 (function () {
   const KEY = 'aena_db_v1';
@@ -91,7 +94,7 @@
       p('Pão francês', 'kg', 'processado', 'cereal', [300, 8, 58.6, 3.1, 2.3, 648])
     ];
     return {
-      versao: 1,
+      versao: 2,
       config: Object.assign({}, DEFAULT_CONFIG),
       usuarios: [],
       escolas: [
@@ -106,102 +109,299 @@
       preparacoes: [],
       cardapios: [],
       repasses: [],
+      estoque: {},
       log: []
     };
   }
 
+
+  const COLS = ['usuarios', 'escolas', 'fornecedores', 'produtos', 'entradas', 'saidas',
+    'refeicoes', 'preparacoes', 'cardapios', 'repasses'];
+
+  // Contribuição de um documento para o resumo de estoque {produtoId: {qtdEnt, valorEnt, qtdSai}}
+  function efeito(col, o) {
+    const r = {};
+    const add = (pid, k, v) => { if (!pid || !v) return; r[pid] = r[pid] || { qtdEnt: 0, valorEnt: 0, qtdSai: 0 }; r[pid][k] += v; };
+    if (!o) return r;
+    if (col === 'entradas') { const q = +o.quantidade || 0; add(o.produtoId, 'qtdEnt', q); add(o.produtoId, 'valorEnt', q * (+o.valorUnit || 0)); }
+    if (col === 'saidas') add(o.produtoId, 'qtdSai', +o.quantidade || 0);
+    if (col === 'refeicoes') (o.itens || []).forEach(i => add(i.produtoId, 'qtdSai', +i.quantidade || 0));
+    return r;
+  }
+  function combina(a, b, sinalB) {
+    const r = JSON.parse(JSON.stringify(a));
+    Object.entries(b).forEach(([pid, v]) => {
+      r[pid] = r[pid] || { qtdEnt: 0, valorEnt: 0, qtdSai: 0 };
+      Object.keys(v).forEach(k => r[pid][k] += sinalB * v[k]);
+    });
+    return r;
+  }
+  const limpo = o => JSON.parse(JSON.stringify(o));
+  const arred = v => Math.round(v * 1e6) / 1e6;
+
   const DB = {
-    MODALIDADES, CLASSES, GRUPOS, PAPEIS, DEFAULT_CONFIG,
+    MODALIDADES, CLASSES, GRUPOS, PAPEIS, DEFAULT_CONFIG, COLS,
     data: null,
+    modo: 'local',
     uid,
+
+    /* ================= Inicialização ================= */
+
+    // opts.cols: coleções a carregar (modo Firebase). opts.periodo: {col: [ini, fim]} carrega só o intervalo.
+    async init(opts) {
+      opts = opts || {};
+      if (window.FB && FB.enabled) {
+        this.modo = 'firebase';
+        await this._initFirebase(opts);
+      } else {
+        this.modo = 'local';
+        this.load();
+      }
+      this._aplicaPerCapita();
+      return this.data;
+    },
 
     load() {
       if (this.data) return this.data;
       try { this.data = JSON.parse(localStorage.getItem(KEY)); } catch (e) { this.data = null; }
       if (!this.data) { this.data = seed(); this.save(); }
-      // Garante coleções novas em bases antigas
       const base = seed();
-      Object.keys(base).forEach(k => { if (this.data[k] === undefined) this.data[k] = base[k]; });
+      Object.keys(base).forEach(k => { if (this.data[k] === undefined) this.data[k] = k === 'estoque' ? {} : base[k]; });
       this.data.config = Object.assign({}, DEFAULT_CONFIG, this.data.config);
-      // Valores per capita ajustados pelo administrador sobrescrevem o padrão
-      Object.entries(this.data.config.perCapita || {}).forEach(([k, v]) => {
-        if (MODALIDADES[k] && +v > 0) MODALIDADES[k].perCapita = +v;
-      });
+      this._migraLocal();
+      this._aplicaPerCapita();
       return this.data;
     },
 
-    save() {
-      localStorage.setItem(KEY, JSON.stringify(this.data));
+    _aplicaPerCapita() {
+      Object.entries((this.data.config || {}).perCapita || {}).forEach(([k, v]) => {
+        if (MODALIDADES[k] && +v > 0) MODALIDADES[k].perCapita = +v;
+      });
     },
 
-    list(col) { return this.load()[col] || []; },
+    // Versão 1 -> 2: saídas de consumo passam a ficar dentro do registro de refeição; cria resumo de estoque
+    _migraLocal() {
+      const d = this.data;
+      if ((d.versao || 1) >= 2) return;
+      const consumo = d.saidas.filter(s => s.refeicaoId);
+      consumo.forEach(s => {
+        const r = d.refeicoes.find(x => x.id === s.refeicaoId);
+        if (r) { r.itens = r.itens || []; r.itens.push({ produtoId: s.produtoId, quantidade: +s.quantidade }); }
+      });
+      d.saidas = d.saidas.filter(s => !s.refeicaoId);
+      this.recalculaEstoque();
+      d.versao = 2;
+      this.save();
+    },
+
+    // Recalcula o resumo de estoque a partir do histórico em memória
+    recalculaEstoque() {
+      let r = {};
+      ['entradas', 'saidas', 'refeicoes'].forEach(col => this.data[col].forEach(o => { r = combina(r, efeito(col, o), 1); }));
+      this.data.estoque = r;
+      return r;
+    },
+
+    async _initFirebase(opts) {
+      await FB.load();
+      const { fs, db } = FB;
+      const d = seed();
+      COLS.forEach(c => d[c] = []);
+      d.estoque = {}; d.log = [];
+      this.data = d;
+      const cfg = await fs.getDoc(fs.doc(db, 'config', 'geral')).catch(() => null);
+      d.config = Object.assign({}, DEFAULT_CONFIG, cfg && cfg.exists() ? cfg.data() : {});
+      const tarefas = [];
+      const periodo = opts.periodo || {};
+      const cols = [...new Set([...(opts.cols || []), ...Object.keys(periodo)])];
+      cols.forEach(c => tarefas.push(this.fetch(c, periodo[c])));
+      if (opts.estoque !== false) {
+        tarefas.push(fs.getDocs(fs.collection(db, 'estoque')).then(snap => {
+          snap.forEach(x => { d.estoque[x.id] = Object.assign({ qtdEnt: 0, valorEnt: 0, qtdSai: 0 }, x.data()); });
+        }));
+      }
+      await Promise.all(tarefas);
+    },
+
+    // Carrega (ou recarrega) uma coleção; com intervalo [ini, fim] filtra pelo campo "data"
+    async fetch(col, intervalo) {
+      if (this.modo !== 'firebase') return this.list(col);
+      const { fs, db } = FB;
+      let q = fs.collection(db, col);
+      if (intervalo && intervalo[0]) q = fs.query(q, fs.where('data', '>=', intervalo[0]), fs.where('data', '<=', intervalo[1] || '9999-12-31'));
+      const snap = await fs.getDocs(q);
+      const arr = [];
+      snap.forEach(x => arr.push(Object.assign({}, x.data(), { id: x.id })));
+      this.data[col] = arr;
+      return arr;
+    },
+
+    async fetchLog(n) {
+      if (this.modo !== 'firebase') return this.list('log').slice(-n).reverse();
+      const { fs, db } = FB;
+      const snap = await fs.getDocs(fs.query(fs.collection(db, 'log'), fs.orderBy('em', 'desc'), fs.limit(n)));
+      const arr = []; snap.forEach(x => arr.push(x.data()));
+      return arr;
+    },
+
+    save() {
+      if (this.modo === 'local') localStorage.setItem(KEY, JSON.stringify(this.data));
+    },
+
+    async saveConfig(patch) {
+      Object.assign(this.data.config, patch);
+      this._aplicaPerCapita();
+      if (this.modo === 'firebase') {
+        const { fs, db } = FB;
+        await fs.setDoc(fs.doc(db, 'config', 'geral'), limpo(this.data.config));
+      }
+      this.logAction('alterou', 'config', 'geral');
+      this.save();
+    },
+
+    /* ================= Leitura ================= */
+    list(col) { return (this.data && this.data[col]) || []; },
     get(col, id) { return this.list(col).find(x => x.id === id); },
+
+    /* ================= Gravação ================= */
+    _sess() { return window.Auth && Auth.session(); },
 
     insert(col, obj) {
       obj.id = obj.id || uid();
       obj.criadoEm = obj.criadoEm || new Date().toISOString();
-      const s = window.Auth && Auth.session();
-      if (s) obj.criadoPor = obj.criadoPor || s.login;
-      this.load()[col].push(obj);
-      this.logAction('inseriu', col, obj.id);
-      this.save();
+      const s = this._sess();
+      if (s) { obj.criadoPor = obj.criadoPor || s.login; obj.criadoPorUid = obj.criadoPorUid || s.userId; }
+      this.data[col].push(obj);
+      this._persist(col, obj, efeito(col, obj), 'inseriu');
       return obj;
     },
 
     update(col, id, patch) {
       const o = this.get(col, id);
       if (!o) return null;
+      const antes = efeito(col, o);
       Object.assign(o, patch, { alteradoEm: new Date().toISOString() });
-      this.logAction('alterou', col, id);
-      this.save();
+      delete o.id; o.id = id;
+      this._persist(col, o, combina(efeito(col, o), antes, -1), 'alterou');
       return o;
     },
 
     remove(col, id) {
-      const d = this.load();
-      d[col] = d[col].filter(x => x.id !== id);
-      this.logAction('excluiu', col, id);
-      this.save();
+      const o = this.get(col, id);
+      if (!o) return;
+      this.data[col] = this.data[col].filter(x => x.id !== id);
+      this._persist(col, null, combina({}, efeito(col, o), -1), 'excluiu', id);
+    },
+
+    // Aplica o delta de estoque em memória e grava (localStorage ou lote atômico no Firestore)
+    _persist(col, obj, delta, acao, idRemovido) {
+      const est = this.data.estoque;
+      Object.entries(delta).forEach(([pid, v]) => {
+        est[pid] = est[pid] || { qtdEnt: 0, valorEnt: 0, qtdSai: 0 };
+        Object.keys(v).forEach(k => est[pid][k] = arred(est[pid][k] + v[k]));
+      });
+      const id = obj ? obj.id : idRemovido;
+      if (this.modo === 'local') {
+        this.logAction(acao, col, id);
+        this.save();
+        return;
+      }
+      const { fs, db } = FB;
+      const b = fs.writeBatch(db);
+      const ref = fs.doc(db, col, id);
+      if (obj) { const dados = limpo(obj); delete dados.id; b.set(ref, dados); } else b.delete(ref);
+      Object.entries(delta).forEach(([pid, v]) => {
+        const inc = {};
+        Object.keys(v).forEach(k => { if (v[k]) inc[k] = fs.increment(arred(v[k])); });
+        if (Object.keys(inc).length) b.set(fs.doc(db, 'estoque', pid), inc, { merge: true });
+      });
+      const s = this._sess();
+      b.set(fs.doc(fs.collection(db, 'log')), { em: new Date().toISOString(), por: s ? s.login : '-', acao, col, id });
+      b.commit().catch(e => {
+        console.error('Falha ao gravar', col, e);
+        const msg = 'Erro ao salvar no servidor: ' + FB.traduzErro(e) + ' Recarregue a página.';
+        if (window.UI) UI.toast(msg, 8000); else alert(msg);
+      });
     },
 
     logAction(acao, col, id) {
-      const s = window.Auth && Auth.session();
-      const d = this.load();
+      if (this.modo !== 'local') return; // no Firebase o log vai no mesmo lote da gravação
+      const s = this._sess();
+      const d = this.data;
       d.log.push({ em: new Date().toISOString(), por: s ? s.login : '-', acao, col, id });
       if (d.log.length > 2000) d.log = d.log.slice(-2000);
     },
 
-    exportJSON() { return JSON.stringify(this.load(), null, 2); },
-    importJSON(txt) {
+    /* ================= Backup ================= */
+    async exportJSON() {
+      if (this.modo === 'firebase') {
+        for (const c of COLS) await this.fetch(c);
+      }
+      const d = limpo(this.data);
+      if (this.modo === 'firebase') d.usuarios = d.usuarios.map(u => ({ id: u.id, login: u.login, nome: u.nome, papel: u.papel, escolaId: u.escolaId, ativo: u.ativo }));
+      return JSON.stringify(d, null, 2);
+    },
+
+    // Local: substitui tudo. Firebase: grava os cadastros e movimentos (não cria logins) e recalcula o estoque.
+    async importJSON(txt, progresso) {
       const obj = JSON.parse(txt);
-      if (!obj || !Array.isArray(obj.produtos) || !Array.isArray(obj.usuarios)) throw new Error('Arquivo inválido');
-      this.data = obj; this.load(); this.save();
+      if (!obj || !Array.isArray(obj.produtos)) throw new Error('Arquivo inválido');
+      if (this.modo === 'local') {
+        if (!Array.isArray(obj.usuarios) || !obj.usuarios.length) throw new Error('Backup sem usuários');
+        const base = seed();
+        Object.keys(base).forEach(k => { if (obj[k] === undefined) obj[k] = k === 'estoque' ? {} : base[k]; });
+        obj.config = Object.assign({}, DEFAULT_CONFIG, obj.config);
+        obj.versao = obj.versao || 1;
+        // Backup do modo online não tem senhas: mantém os usuários locais atuais
+        if (obj.usuarios.some(u => !u.senha)) obj.usuarios = this.load().usuarios;
+        this.data = obj;
+        this._migraLocal();
+        this.recalculaEstoque();
+        this.save();
+        return;
+      }
+      // Normaliza versão antiga
+      const tmp = Object.assign(seed(), obj);
+      const salvo = this.data; this.data = tmp; this.modo = 'local-tmp';
+      this._migraLocal(); this.recalculaEstoque();
+      this.data = salvo; this.modo = 'firebase';
+      const { fs, db } = FB;
+      const ops = [];
+      COLS.filter(c => c !== 'usuarios').forEach(c => (tmp[c] || []).forEach(o => { const x = limpo(o); const id = x.id; delete x.id; ops.push([fs.doc(db, c, id), x]); }));
+      Object.entries(tmp.estoque).forEach(([pid, v]) => ops.push([fs.doc(db, 'estoque', pid), v]));
+      ops.push([fs.doc(db, 'config', 'geral'), Object.assign({}, DEFAULT_CONFIG, tmp.config)]);
+      for (let i = 0; i < ops.length; i += 400) {
+        const b = fs.writeBatch(db);
+        ops.slice(i, i + 400).forEach(([ref, x]) => b.set(ref, x));
+        await b.commit();
+        if (progresso) progresso(Math.min(ops.length, i + 400), ops.length);
+      }
     },
-    reset() { localStorage.removeItem(KEY); this.data = null; },
 
-    /* ---------- Cálculos de estoque ---------- */
-    estoque(produtoId) {
-      const d = this.load();
-      let q = 0;
-      d.entradas.forEach(e => { if (e.produtoId === produtoId) q += +e.quantidade || 0; });
-      d.saidas.forEach(s => { if (s.produtoId === produtoId) q -= +s.quantidade || 0; });
-      return Math.round(q * 1000) / 1000;
+    // Dados iniciais (produtos e escolas de exemplo) para um projeto Firebase novo
+    async semearFirebase() {
+      const { fs, db } = FB;
+      const base = seed();
+      const b = fs.writeBatch(db);
+      ['produtos', 'escolas'].forEach(c => base[c].forEach(o => { const x = limpo(o); const id = x.id; delete x.id; b.set(fs.doc(db, c, id), x); }));
+      b.set(fs.doc(db, 'config', 'geral'), limpo(base.config));
+      await b.commit();
     },
 
-    precoMedio(produtoId) {
-      let q = 0, v = 0;
-      this.list('entradas').forEach(e => {
-        if (e.produtoId === produtoId) { q += +e.quantidade || 0; v += (+e.quantidade || 0) * (+e.valorUnit || 0); }
-      });
-      return q > 0 ? v / q : 0;
-    },
+    /* ================= Estoque ================= */
+    _resumo(pid) { return (this.data.estoque || {})[pid] || { qtdEnt: 0, valorEnt: 0, qtdSai: 0 }; },
+    estoque(produtoId) { const r = this._resumo(produtoId); return Math.round(((+r.qtdEnt || 0) - (+r.qtdSai || 0)) * 1000) / 1000; },
+    precoMedio(produtoId) { const r = this._resumo(produtoId); return r.qtdEnt > 0 ? r.valorEnt / r.qtdEnt : 0; },
 
-    // Lotes com saldo para alerta de validade (aproximação FIFO por validade)
+    // Lotes com saldo (para alerta de validade). Considera que as saídas consomem primeiro
+    // as entradas não carregadas (mais antigas) e depois as de validade mais próxima.
     lotesComSaldo(produtoId) {
+      const r = this._resumo(produtoId);
       const entradas = this.list('entradas').filter(e => e.produtoId === produtoId)
         .sort((a, b) => (a.validade || '9999').localeCompare(b.validade || '9999'));
-      let saida = this.list('saidas').filter(s => s.produtoId === produtoId)
-        .reduce((t, s) => t + (+s.quantidade || 0), 0);
+      const carregado = entradas.reduce((t, e) => t + (+e.quantidade || 0), 0);
+      const antigas = Math.max(0, (+r.qtdEnt || 0) - carregado);
+      let saida = Math.max(0, (+r.qtdSai || 0) - antigas);
       const res = [];
       entradas.forEach(e => {
         const consumido = Math.min(saida, +e.quantidade || 0);
@@ -212,22 +412,21 @@
       return res;
     },
 
-    // Converte gramas (ou mL) da ficha técnica para a unidade de estoque do produto
     gramasParaUnidade(produto, gramas) {
       if (!produto) return 0;
       if (produto.unidade === 'un') return produto.pesoUnidadeG > 0 ? gramas / produto.pesoUnidadeG : 0;
-      return gramas / 1000; // kg ou L
+      return gramas / 1000;
     },
 
-    /* ---------- Ficha técnica ---------- */
+    /* ================= Ficha técnica ================= */
     calcFicha(prep) {
       const out = { ingredientes: [], kcal: 0, ptn: 0, cho: 0, lip: 0, fibra: 0, sodio: 0, custo: 0, classes: {} };
       (prep.ingredientes || []).forEach(i => {
         const prod = this.get('produtos', i.produtoId);
         if (!prod) return;
-        const liquido = +i.perCapita || 0;                 // g por porção (parte comestível)
-        const fc = +i.fc || 1;                              // fator de correção
-        const bruto = liquido * fc;                          // g por porção (como comprado)
+        const liquido = +i.perCapita || 0;
+        const fc = +i.fc || 1;
+        const bruto = liquido * fc;
         const f = liquido / 100;
         const custo = this.gramasParaUnidade(prod, bruto) * this.precoMedio(prod.id);
         const r = {
@@ -245,13 +444,13 @@
       return out;
     },
 
-    /* ---------- Cardápio ---------- */
+    /* ================= Cardápio ================= */
     DIAS: ['seg', 'ter', 'qua', 'qui', 'sex'],
     DIAS_NOME: { seg: 'Segunda', ter: 'Terça', qua: 'Quarta', qui: 'Quinta', sex: 'Sexta' },
 
     cardapioDoDia(escolaId, dataISO) {
       const dt = new Date(dataISO + 'T12:00:00');
-      const dow = dt.getDay(); // 0 dom
+      const dow = dt.getDay();
       if (dow < 1 || dow > 5) return null;
       const dia = this.DIAS[dow - 1];
       const c = this.list('cardapios').filter(c => {

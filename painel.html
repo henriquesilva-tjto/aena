@@ -59,12 +59,15 @@
   </div>
 </main>
 
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase.js"></script>
 <script src="js/db.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/ui.js"></script>
 <script>
-const sess = UI.init();
-if (sess) {
+function mesAtual() { const h = UI.hoje(); return [h.slice(0, 8) + '01', h.slice(0, 8) + '31']; }
+UI.init({ cols: ['produtos', 'escolas', 'fornecedores', 'entradas'], periodo: { refeicoes: mesAtual(), saidas: mesAtual(), repasses: mesAtual() } }).then(sess => {
+  if (!sess) return;
   const { $, esc, money, num, pct, data } = UI;
   const cfg = DB.load().config;
   const hoje = UI.hoje();
@@ -78,9 +81,19 @@ if (sess) {
     if (v === 'mes') { $('#dIni').value = hoje.slice(0, 8) + '01'; $('#dFim').value = hoje; }
     if (v === 'mesAnt') { const a = new Date(d.getFullYear(), d.getMonth() - 1, 1, 12), b = new Date(d.getFullYear(), d.getMonth(), 0, 12); $('#dIni').value = iso(a); $('#dFim').value = iso(b); }
     if (v === 'ano') { $('#dIni').value = hoje.slice(0, 4) + '-01-01'; $('#dFim').value = hoje; }
-    render();
+    recarregar();
   };
-  ['#dIni', '#dFim', '#fEscola'].forEach(s => $(s).onchange = render);
+  // No modo online busca no servidor só o período escolhido
+  async function recarregar() {
+    const per = [$('#dIni').value, $('#dFim').value];
+    UI.carregando(true);
+    try { await Promise.all(['refeicoes', 'saidas', 'repasses'].map(c => DB.fetch(c, per))); }
+    catch (e) { UI.toast('Erro ao buscar dados: ' + e.message, 6000); }
+    finally { UI.carregando(false); }
+    render();
+  }
+  ['#dIni', '#dFim'].forEach(s => $(s).onchange = recarregar);
+  $('#fEscola').onchange = render;
 
   const kpi = (label, value, hint, cls) => `<div class="kpi ${cls || ''}"><div class="label">${label}</div><div class="value">${value}</div>${hint ? `<div class="hint">${hint}</div>` : ''}</div>`;
   const noPeriodo = d => d >= $('#dIni').value && d <= $('#dFim').value;
@@ -93,9 +106,10 @@ if (sess) {
     csvLinhas = [['Relatório AENA', `${data(ini)} a ${data(fim)}`, escolaNome], []];
 
     const refeicoes = DB.list('refeicoes').filter(r => noPeriodo(r.data) && (!esc_ || r.escolaId === esc_));
-    const saidas = DB.list('saidas').filter(s => noPeriodo(s.data) && (!esc_ || s.escolaId === esc_ || (s.tipo === 'perda' && !esc_)));
-    const consumo = saidas.filter(s => s.tipo !== 'perda');
-    const perdas = saidas.filter(s => s.tipo === 'perda');
+    // Consumo = itens baixados nos registros de refeição; perdas = baixas do diretor (só no total geral)
+    const consumo = [];
+    refeicoes.forEach(r => (r.itens || []).forEach(i => consumo.push({ produtoId: i.produtoId, quantidade: +i.quantidade || 0, escolaId: r.escolaId })));
+    const perdas = esc_ ? [] : DB.list('saidas').filter(s => s.tipo === 'perda' && noPeriodo(s.data));
     const entradas = DB.list('entradas').filter(e => noPeriodo(e.data));
     const repasses = DB.list('repasses').filter(r => noPeriodo(r.data));
 
@@ -231,7 +245,7 @@ if (sess) {
   $('#btnPrint').onclick = () => window.print();
   $('#btnCsv').onclick = () => UI.download(`relatorio_aena_${$('#dIni').value}_${$('#dFim').value}.csv`, UI.csv(csvLinhas), 'text/csv');
   render();
-}
+});
 </script>
 </body>
 </html>

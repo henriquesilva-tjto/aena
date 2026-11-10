@@ -13,10 +13,11 @@
       <b>AENA</b>
       <div class="muted">Alimentação Escolar · Novo Acordo-TO</div>
       <small>Secretaria Municipal de Educação</small>
+      <div id="modo" style="margin-top:.4rem"></div>
     </div>
 
-    <form id="fLogin">
-      <div class="row"><div class="field"><label for="login">Usuário</label>
+    <form id="fLogin" method="post" action="javascript:void(0)">
+      <div class="row"><div class="field"><label for="login">Usuário ou e-mail</label>
         <input id="login" name="login" autocomplete="username" required autofocus></div></div>
       <div class="row"><div class="field"><label for="senha">Senha</label>
         <input id="senha" name="senha" type="password" autocomplete="current-password" required></div></div>
@@ -24,7 +25,7 @@
       <button type="submit" style="width:100%">Entrar</button>
     </form>
 
-    <form id="fTroca" class="hidden">
+    <form id="fTroca" class="hidden" method="post" action="javascript:void(0)">
       <div class="alert info">Primeiro acesso: defina uma nova senha pessoal.</div>
       <div class="row"><div class="field"><label for="nova">Nova senha</label>
         <input id="nova" type="password" autocomplete="new-password" required></div></div>
@@ -37,13 +38,13 @@
   </div>
 </div>
 
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase.js"></script>
 <script src="js/db.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/ui.js"></script>
 <script>
 (async function () {
-  DB.load();
-  await Auth.garantirUsuarios();
   const params = new URLSearchParams(location.search);
   const volta = params.get('volta');
 
@@ -51,42 +52,57 @@
     if (volta && Auth.ACESSO[volta] && Auth.ACESSO[volta].includes(papel)) return volta;
     return Auth.paginaInicial(papel);
   }
-
   function mostrarTroca() {
     UI.$('#fLogin').classList.add('hidden');
     UI.$('#fTroca').classList.remove('hidden');
     UI.$('#nova').focus();
   }
-
-  const sess = Auth.session();
-  if (sess) {
-    const u = DB.get('usuarios', sess.userId);
-    if (u && u.trocarSenha) mostrarTroca();
-    else if (u) location.replace(destino(sess.papel));
-  }
+  function erro(el, msg) { const m = UI.$(el); m.textContent = msg; m.classList.remove('hidden'); }
 
   UI.$('#fLogin').addEventListener('submit', async ev => {
     ev.preventDefault();
+    const btn = UI.$('#fLogin button'); if (btn.disabled) return; btn.disabled = true;
     const r = await Auth.login(UI.$('#login').value, UI.$('#senha').value);
-    const m = UI.$('#msg');
-    if (!r.ok) { m.textContent = r.msg; m.classList.remove('hidden'); return; }
+    btn.disabled = false;
+    if (!r.ok) return erro('#msg', r.msg);
     if (r.trocarSenha) return mostrarTroca();
     location.replace(destino(r.user.papel));
   });
 
   UI.$('#fTroca').addEventListener('submit', async ev => {
     ev.preventDefault();
-    const m = UI.$('#msg2');
     const n1 = UI.$('#nova').value, n2 = UI.$('#nova2').value;
-    let erro = Auth.validaSenha(n1);
-    if (!erro && n1 !== n2) erro = 'As senhas não conferem.';
-    if (!erro && n1 === 'aena2026') erro = 'Escolha uma senha diferente da senha inicial.';
-    if (erro) { m.textContent = erro; m.classList.remove('hidden'); return; }
+    let e = Auth.validaSenha(n1);
+    if (!e && n1 !== n2) e = 'As senhas não conferem.';
+    if (!e && n1 === 'aena2026') e = 'Escolha uma senha diferente da senha inicial.';
+    if (e) return erro('#msg2', e);
     const s = Auth.session();
     if (!s) return location.reload();
-    await Auth.setSenha(s.userId, n1);
+    try { await Auth.trocarSenhaInicial(n1); }
+    catch (x) { return erro('#msg2', (window.FB && FB.traduzErro) ? FB.traduzErro(x) : x.message); }
     location.replace(destino(s.papel));
   });
+
+  const btnEntrar = UI.$('#fLogin button');
+  btnEntrar.disabled = true; btnEntrar.textContent = 'Conectando...';
+  try {
+    if (Auth.online()) {
+      UI.$('#modo').innerHTML = '<span class="badge ok">Online</span>';
+      if (await Auth.precisaSetup()) { location.replace('setup.html'); return; }
+    } else {
+      UI.$('#modo').innerHTML = '<span class="badge warn">Modo local (só neste navegador)</span>';
+      DB.load();
+      await Auth.garantirUsuarios();
+    }
+    const sess = await Auth.ready();
+    if (sess && sess.ativo !== false) {
+      if (sess.trocarSenha || (!Auth.online() && (DB.get('usuarios', sess.userId) || {}).trocarSenha)) mostrarTroca();
+      else location.replace(destino(sess.papel));
+    }
+  } catch (e) {
+    erro('#msg', 'Não foi possível conectar ao servidor: ' + (e.message || e));
+  }
+  btnEntrar.disabled = false; btnEntrar.textContent = 'Entrar';
 })();
 </script>
 </body>

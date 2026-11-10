@@ -101,29 +101,54 @@
         </div>`;
       document.body.prepend(bar);
       UI.$('#btnSair').onclick = () => Auth.logout();
-      UI.$('#btnSenha').onclick = () => UI.alterarSenha(sess);
+      UI.$('#btnSenha').onclick = () => UI.alterarSenha();
     },
 
-    async alterarSenha(sess) {
+    async alterarSenha() {
       const atual = prompt('Senha atual:');
       if (atual == null) return;
-      if (!(await Auth.conferirSenha(sess.userId, atual))) return alert('Senha atual incorreta.');
       const nova = prompt('Nova senha (mín. 8 caracteres, letras e números):');
       if (nova == null) return;
       const erro = Auth.validaSenha(nova);
       if (erro) return alert(erro);
       if (prompt('Repita a nova senha:') !== nova) return alert('As senhas não conferem.');
-      await Auth.setSenha(sess.userId, nova);
-      UI.toast('Senha alterada.');
+      try { await Auth.alterarSenha(atual, nova); UI.toast('Senha alterada.'); }
+      catch (e) { alert(e.message || 'Erro ao alterar a senha.'); }
     },
 
-    // Inicializa página protegida
-    init() {
-      DB.load();
-      const s = Auth.guard();
-      if (!s) return null;
-      UI.header(s);
-      return s;
+    carregando(on) {
+      let el = document.getElementById('aenaCarregando');
+      if (on && !el) {
+        el = document.createElement('div'); el.id = 'aenaCarregando'; el.className = 'toast'; el.textContent = 'Carregando dados...';
+        document.body.appendChild(el);
+      }
+      if (!on && el) el.remove();
+    },
+
+    /* Inicializa página protegida.
+     * opts.cols: coleções que a página usa; opts.periodo: {col: [ini, fim]} (modo online). */
+    async init(opts) {
+      UI.carregando(true);
+      try {
+        const s = await Auth.guard();
+        if (!s) return null;
+        await DB.init(opts);
+        UI.header(s);
+        if (DB.modo === 'local') {
+          const aviso = document.createElement('div');
+          aviso.className = 'alert warn no-print'; aviso.style.margin = '0';  aviso.style.borderRadius = '0';
+          aviso.innerHTML = '<b>Modo local:</b> os dados ficam só neste navegador. Configure o Firebase para compartilhar entre as escolas (ver README).';
+          document.querySelector('header.topbar').after(aviso);
+        }
+        return s;
+      } catch (e) {
+        console.error(e);
+        document.body.insertAdjacentHTML('afterbegin', `<div class="alert bad" style="margin:1rem">Erro ao carregar: ${UI.esc(e.message || e)}.
+          Verifique a internet e recarregue. <a href="index.html">Voltar ao login</a></div>`);
+        return null;
+      } finally {
+        UI.carregando(false);
+      }
     }
   };
   window.UI = UI;
