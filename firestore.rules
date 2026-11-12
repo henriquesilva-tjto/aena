@@ -24,7 +24,14 @@ service cloud.firestore {
         // o próprio usuário só altera estes campos
         || (ativo() && request.auth.uid == uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['trocarSenha', 'ultimoAcesso', 'alteradoEm']));
-      allow delete: if false;
+      allow delete: if perfil(['admin']) && request.auth.uid != uid;
+    }
+
+    // ---------- Vínculo login -> conta (usado no login e no reset de senha) ----------
+    match /logins/{login} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if perfil(['admin']);
     }
 
     // ---------- Configuração ----------

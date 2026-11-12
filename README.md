@@ -42,10 +42,11 @@ Sistema web para gerenciar a alimentação escolar (PNAE) da Secretaria Municipa
 ### Limites do plano gratuito (Spark)
 50 mil leituras e 20 mil gravações por dia, e 1 GB de dados. Para um município do porte de Novo Acordo, sobra bastante. O sistema carrega só o necessário de cada página (o relatório busca apenas o período escolhido) e mantém um resumo de estoque por produto, para não reler o histórico.
 
-### Senhas no modo online
+### Usuários e senhas (tela Usuários)
+- **Resetar senha:** o admin define uma senha temporária (o sistema sugere uma). O usuário entra com o mesmo login e é obrigado a trocá-la. Funciona para qualquer login, com ou sem e-mail.
+- **Remover:** o usuário perde o acesso na hora; os registros que ele fez continuam no sistema. Para afastamento temporário, prefira *Editar → desmarcar Ativo*.
 - Cada pessoa troca a própria senha em **Alterar senha**.
-- Login com **e-mail real**: o admin clica em **Enviar e-mail de nova senha** na lista de Usuários.
-- Login **sem e-mail** (ex.: `maria.escola1`): a senha não pode ser redefinida pelo sistema. Desative o usuário e crie outro login.
+- Detalhe técnico do modo online: o navegador não pode alterar a senha de outra conta nem apagá-la no Firebase Authentication. Por isso o reset cria uma conta nova para o mesmo login (vínculo na coleção `logins`) e a conta antiga fica sem acesso. Contas antigas podem ser apagadas opcionalmente em *Console do Firebase → Authentication* (as de e-mail `@aena-novoacordo.local` sem perfil).
 
 ## Primeiro acesso (modo local)
 

@@ -131,7 +131,7 @@
       if (this.online()) {
         try {
           await FB.load();
-          const cred = await FB.au.signInWithEmailAndPassword(FB.auth, FB.loginParaEmail(login), senha);
+          const cred = await FB.au.signInWithEmailAndPassword(FB.auth, await this._emailDoLogin(login), senha);
           const s = await this._perfil(cred.user);
           if (!s || !s.ativo) { await FB.au.signOut(FB.auth); return { ok: false, msg: s ? 'Usuário desativado.' : 'Usuário sem perfil cadastrado. Procure o administrador.' }; }
           this._sess = s;
@@ -142,6 +142,35 @@
         }
       }
       return this._loginLocal(login, senha);
+    },
+
+    // Login -> e-mail interno da conta atual (muda quando o admin reseta a senha)
+    async _emailDoLogin(login) {
+      const l = String(login || '').trim().toLowerCase();
+      if (l && !l.includes('/')) {
+        try {
+          const snap = await FB.fs.getDoc(FB.fs.doc(FB.db, 'logins', l));
+          if (snap.exists() && snap.data().email) return snap.data().email;
+        } catch (e) { /* sem vínculo: usa o padrão */ }
+      }
+      return FB.loginParaEmail(l);
+    },
+
+    _novoEmailInterno(login) {
+      const slug = String(login).toLowerCase().replace(/[^a-z0-9._-]/g, '_');
+      return `${slug}.${Date.now().toString(36)}@${FB.DOMINIO}`;
+    },
+
+    async _criarConta(email, senha) {
+      const sec = await FB.secundario();
+      try {
+        const cred = await FB.au.createUserWithEmailAndPassword(sec, email, senha);
+        await FB.au.signOut(sec);
+        return cred.user.uid;
+      } catch (e) {
+        if (e.code === 'auth/email-already-in-use') throw new Error('Este e-mail já tem conta no Firebase. Use outro login, ou exclua a conta antiga em Console do Firebase > Authentication.');
+        throw new Error(FB.traduzErro(e));
+      }
     },
 
     async logout() {
@@ -200,12 +229,14 @@
     // Cria usuário (admin). No Firebase cria o login no Authentication e o perfil no Firestore.
     async criarUsuario(dados, senha) {
       if (this.online()) {
-        const sec = await FB.secundario();
-        let cred;
-        try { cred = await FB.au.createUserWithEmailAndPassword(sec, FB.loginParaEmail(dados.login), senha); }
-        catch (e) { throw new Error(FB.traduzErro(e)); }
-        await FB.au.signOut(sec);
-        return DB.insert('usuarios', Object.assign({}, dados, { id: cred.user.uid, trocarSenha: true }));
+        const login = dados.login.toLowerCase();
+        const existe = await FB.fs.getDoc(FB.fs.doc(FB.db, 'logins', login));
+        if (existe.exists()) throw new Error('Esse login já existe.');
+        // E-mail real: conta com o próprio e-mail. Sem e-mail: endereço interno.
+        const email = login.includes('@') ? login : this._novoEmailInterno(login);
+        const uidNovo = await this._criarConta(email, senha);
+        await FB.fs.setDoc(FB.fs.doc(FB.db, 'logins', login), { email, uid: uidNovo });
+        return DB.insert('usuarios', Object.assign({}, dados, { login, id: uidNovo, trocarSenha: true }));
       }
       const u = DB.insert('usuarios', Object.assign({}, dados));
       await this.setSenha(u.id, senha);
@@ -213,18 +244,47 @@
       return u;
     },
 
-    // Redefinição pelo admin. Firebase: só por e-mail (logins sem e-mail: criar novo login).
+    // Reset de senha pelo admin: define senha temporária; o usuário troca no próximo acesso.
+    // Firebase: o navegador não pode alterar a senha de outra conta, então cria-se uma conta nova
+    // para o mesmo login, o perfil é transferido e a conta antiga fica sem acesso.
     async redefinirSenha(userId, nova) {
       const u = DB.get('usuarios', userId);
+      if (!u) throw new Error('Usuário não encontrado.');
+      if (userId === this.session().userId) throw new Error('Para a sua própria senha, use "Alterar senha" no topo da página.');
       if (this.online()) {
-        const email = FB.loginParaEmail(u.login);
-        if (!FB.emailReal(email)) throw new Error('No modo online, a senha de login sem e-mail não pode ser redefinida pelo sistema. Desative este usuário e crie um novo login (ou use um e-mail real como login).');
-        await FB.au.sendPasswordResetEmail(FB.auth, email);
-        return 'email';
+        const login = u.login.toLowerCase();
+        const email = this._novoEmailInterno(login);
+        const uidNovo = await this._criarConta(email, nova);
+        const perfil = JSON.parse(JSON.stringify(u));
+        delete perfil.id;
+        DB.insert('usuarios', Object.assign(perfil, { id: uidNovo, trocarSenha: true, senhaResetadaEm: new Date().toISOString() }));
+        await FB.fs.setDoc(FB.fs.doc(FB.db, 'logins', login), { email, uid: uidNovo });
+        DB.remove('usuarios', userId);
+        return uidNovo;
       }
       await this.setSenha(userId, nova);
-      DB.update('usuarios', userId, { trocarSenha: true });
-      return 'ok';
+      DB.update('usuarios', userId, { trocarSenha: true, senhaResetadaEm: new Date().toISOString() });
+      return userId;
+    },
+
+    // Remove o usuário. Firebase: apaga perfil e vínculo do login (a conta antiga fica sem acesso).
+    async removerUsuario(userId) {
+      const u = DB.get('usuarios', userId);
+      if (!u) return;
+      if (userId === this.session().userId) throw new Error('Você não pode remover o seu próprio usuário.');
+      if (u.papel === 'admin' && DB.list('usuarios').filter(x => x.papel === 'admin' && x.ativo !== false).length <= 1)
+        throw new Error('Não é possível remover o último administrador.');
+      DB.remove('usuarios', userId);
+      if (this.online()) await FB.fs.deleteDoc(FB.fs.doc(FB.db, 'logins', u.login.toLowerCase())).catch(() => {});
+    },
+
+    gerarSenhaTemporaria() {
+      const letras = 'abcdefghjkmnpqrstuvwxyz', nums = '23456789';
+      const r = n => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; };
+      let s = 'Aena';
+      for (let i = 0; i < 2; i++) s += letras[r(letras.length)];
+      for (let i = 0; i < 4; i++) s += nums[r(nums.length)];
+      return s;
     },
 
     /* ============ Primeira configuração (Firebase) ============ */

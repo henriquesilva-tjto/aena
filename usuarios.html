@@ -98,8 +98,8 @@ UI.init({ cols: ['usuarios', 'escolas'] }).then(async sess => {
         if (DB.modo === 'firebase') delete o.login; // login do Firebase não muda depois de criado
         DB.update('usuarios', o.id, o);
         if (senha) {
-          const r = await Auth.redefinirSenha(o.id, senha);
-          if (r === 'email') alert('Foi enviado um e-mail de redefinição de senha para o usuário.');
+          await Auth.redefinirSenha(o.id, senha);
+          alert(`Senha redefinida.\n\nLogin: ${fU.elements.login.value}\nSenha temporária: ${senha}\n\nO usuário deverá trocá-la no próximo acesso.`);
         }
       } else {
         delete o.id;
@@ -116,21 +116,39 @@ UI.init({ cols: ['usuarios', 'escolas'] }).then(async sess => {
       h += `<tr><td>${esc(u.nome)}</td><td>${esc(u.login)}</td><td>${DB.PAPEIS[u.papel]}</td><td>${esc((DB.get('escolas', u.escolaId) || {}).nome || '')}</td>
         <td>${u.ultimoAcesso ? data(u.ultimoAcesso) : '-'}</td>
         <td>${u.ativo ? '<span class="badge ok">Ativo</span>' : '<span class="badge bad">Inativo</span>'} ${u.trocarSenha ? '<span class="badge warn">Trocar senha</span>' : ''}</td>
-        <td><button class="sm secondary" data-ed="${u.id}">Editar</button>
-          ${DB.modo === 'firebase' && FB.emailReal(FB.loginParaEmail(u.login)) ? `<button class="sm secondary" data-reset="${u.id}">Enviar e-mail de nova senha</button>` : ''}</td></tr>`;
+        <td style="white-space:nowrap"><button class="sm secondary" data-ed="${u.id}">Editar</button>
+          ${u.id !== sess.userId ? `<button class="sm secondary" data-reset="${u.id}">Resetar senha</button>
+          <button class="sm danger" data-rm="${u.id}">Remover</button>` : '<small class="muted">(você)</small>'}</td></tr>`;
     });
     $('#tblU').innerHTML = h + '</tbody>';
   }
-  $('#tblU').onclick = ev => {
-    if (ev.target.dataset.reset) {
-      Auth.redefinirSenha(ev.target.dataset.reset).then(() => alert('E-mail de redefinição enviado.')).catch(e => alert(e.message));
+  $('#tblU').onclick = async ev => {
+    const d = ev.target.dataset;
+    if (d.reset) {
+      const u = DB.get('usuarios', d.reset);
+      const nova = prompt(`Resetar a senha de ${u.nome} (${u.login}).\n\nSenha temporária (pode alterar; mín. 8 caracteres, letras e números):`, Auth.gerarSenhaTemporaria());
+      if (nova == null) return;
+      const e = Auth.validaSenha(nova); if (e) return alert(e);
+      ev.target.disabled = true;
+      try {
+        await Auth.redefinirSenha(u.id, nova);
+        alert(`Senha redefinida.\n\nLogin: ${u.login}\nSenha temporária: ${nova}\n\nRepasse ao usuário. Ele deverá trocá-la no próximo acesso.`);
+        limpar(); render();
+      } catch (x) { alert(x.message || x); ev.target.disabled = false; }
+      return;
+    }
+    if (d.rm) {
+      const u = DB.get('usuarios', d.rm);
+      if (!confirm(`Remover o usuário ${u.nome} (${u.login})?\n\nEle perde o acesso imediatamente. Os registros que ele fez continuam no sistema.\nSe for só um afastamento temporário, prefira Editar > desmarcar "Ativo".`)) return;
+      try { await Auth.removerUsuario(u.id); UI.toast('Usuário removido.'); limpar(); render(); }
+      catch (x) { alert(x.message || x); }
       return;
     }
     const id = ev.target.dataset.ed; if (!id) return;
     const u = DB.get('usuarios', id); limpar();
     UI.fillForm(fU, { id: u.id, nome: u.nome, login: u.login, papel: u.papel, escolaId: u.escolaId || '', ativo: u.ativo });
     fU.elements.login.readOnly = DB.modo === 'firebase';
-    fU.elements.senha.placeholder = DB.modo === 'firebase' ? (FB.emailReal(FB.loginParaEmail(u.login)) ? 'Use o botão de e-mail na lista' : 'Sem e-mail: não redefinível') : 'Em branco = manter';
+    fU.elements.senha.placeholder = 'Em branco = manter (ou use Resetar senha)';
     $('#tituloU').textContent = 'Editar usuário'; fU.scrollIntoView();
   };
 
