@@ -80,7 +80,7 @@
     ACESSO: {
       'painel.html':        ['admin', 'secretaria', 'nutricionista', 'diretor'],
       'nutricionista.html': ['admin', 'nutricionista'],
-      'diretor.html':       ['admin', 'diretor'],
+      'diretor.html':       ['admin', 'diretor', 'nutricionista'],
       'merendeira.html':    ['admin', 'merendeira', 'diretor'],
       'usuarios.html':      ['admin'],
       'legislacao.html':    ['admin', 'secretaria', 'nutricionista', 'diretor', 'merendeira']

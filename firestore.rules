@@ -48,7 +48,7 @@ service cloud.firestore {
     }
 
     // ---------- Cadastros e compras (Diretor) ----------
-    match /produtos/{id}     { allow read: if ativo(); allow write: if perfil(['admin', 'diretor']); }
+    match /produtos/{id}     { allow read: if ativo(); allow write: if perfil(['admin', 'diretor', 'nutricionista']); }
     match /escolas/{id}      { allow read: if ativo(); allow write: if perfil(['admin', 'diretor']); }
     match /fornecedores/{id} { allow read: if ativo(); allow write: if perfil(['admin', 'diretor']); }
     match /entradas/{id}     { allow read: if ativo(); allow write: if perfil(['admin', 'diretor']); }

@@ -10,7 +10,7 @@ Sistema web para gerenciar a alimentação escolar (PNAE) da Secretaria Municipa
 | Login | `index.html` | todos | Entrada com usuário e senha |
 | **Relatório (principal)** | `painel.html` | Secretaria, Nutricionista, Diretor, Admin | Refeições servidas, custos, execução do recurso, conformidade PNAE (45% AF, limites de ultraprocessados), estimativa de repasse, alertas e ocorrências. Imprime/PDF e CSV |
 | Nutricionista | `nutricionista.html` | Nutricionista, Admin | Fichas técnicas (per capita, fator de correção, nutrientes, custo por porção) e cardápios semanais com checagem automática |
-| Diretor de Alimentação | `diretor.html` | Diretor, Admin | Entradas (NF, lote, validade, AF, fonte), estoque, baixas/perdas, produtos, escolas, fornecedores, recursos recebidos, backup |
+| Diretor de Alimentação | `diretor.html` | Diretor, Admin (Nutricionista: só Estoque e Produtos) | Entradas (NF, lote, validade, AF, fonte), estoque, baixas/perdas, produtos, escolas, fornecedores, recursos recebidos, backup |
 | Merendeira | `merendeira.html` | Merendeira, Diretor, Admin | Registro diário de refeições servidas e saídas de produtos (cálculo automático pelo cardápio × alunos) |
 | Legislação | `legislacao.html` | todos | Resumo da legislação do PNAE e fontes |
 | Usuários | `usuarios.html` | Admin | Usuários, perfis, vínculo de merendeira à escola, parâmetros e registro de atividades |
