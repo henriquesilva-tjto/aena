@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AENA · Nutricionista</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20261117">
 </head>
 <body>
 <main>
@@ -109,11 +109,11 @@
   </section>
 </main>
 
-<script src="js/firebase-config.js"></script>
-<script src="js/firebase.js"></script>
-<script src="js/db.js"></script>
-<script src="js/auth.js"></script>
-<script src="js/ui.js"></script>
+<script src="js/firebase-config.js?v=20261117"></script>
+<script src="js/firebase.js?v=20261117"></script>
+<script src="js/db.js?v=20261117"></script>
+<script src="js/auth.js?v=20261117"></script>
+<script src="js/ui.js?v=20261117"></script>
 <script>
 UI.init({ cols: ['produtos', 'escolas', 'preparacoes', 'cardapios'] }).then(sess => {
   if (!sess) return;
@@ -263,7 +263,7 @@ UI.init({ cols: ['produtos', 'escolas', 'preparacoes', 'cardapios'] }).then(sess
   }
   function imprimirFicha(id) {
     const w = window.open('', '_blank');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Ficha técnica</title><link rel="stylesheet" href="css/style.css"></head>
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Ficha técnica</title><link rel="stylesheet" href="css/style.css?v=20261117"></head>
       <body><main>${htmlFicha(DB.get('preparacoes', id))}</main><script>setTimeout(()=>print(),400)<\/script></body></html>`);
     w.document.close();
   }

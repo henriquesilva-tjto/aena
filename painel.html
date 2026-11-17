@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AENA · Relatório</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20261117">
 </head>
 <body>
 <main>
@@ -59,11 +59,11 @@
   </div>
 </main>
 
-<script src="js/firebase-config.js"></script>
-<script src="js/firebase.js"></script>
-<script src="js/db.js"></script>
-<script src="js/auth.js"></script>
-<script src="js/ui.js"></script>
+<script src="js/firebase-config.js?v=20261117"></script>
+<script src="js/firebase.js?v=20261117"></script>
+<script src="js/db.js?v=20261117"></script>
+<script src="js/auth.js?v=20261117"></script>
+<script src="js/ui.js?v=20261117"></script>
 <script>
 function mesAtual() { const h = UI.hoje(); return [h.slice(0, 8) + '01', h.slice(0, 8) + '31']; }
 UI.init({ cols: ['produtos', 'escolas', 'fornecedores', 'entradas'], periodo: { refeicoes: mesAtual(), saidas: mesAtual(), repasses: mesAtual() } }).then(sess => {
