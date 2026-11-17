@@ -23,8 +23,11 @@
         <div class="row">
           <div class="field"><label>Nome completo</label><input name="nome" required></div>
           <div class="field sm"><label>Usuário (login)</label><input name="login" required pattern="[a-zA-Z0-9._@\-]{3,60}" title="Letras, números, ponto, hífen, ou um e-mail"></div>
-          <div class="field"><label>Perfil</label><select name="papel"></select></div>
           <div class="field"><label>Escola (merendeira)</label><select name="escolaId"></select></div>
+        </div>
+        <div class="row">
+          <div class="field lg"><label>Perfis de acesso (marque um ou mais)</label>
+            <div id="boxPapeis" style="display:flex;flex-wrap:wrap;gap:.3rem 1.2rem;padding:.3rem 0"></div></div>
         </div>
         <div class="row">
           <div class="field sm"><label>Senha inicial</label><input name="senha" type="text" placeholder="Em branco = manter"></div>
@@ -76,7 +79,10 @@ UI.init({ cols: ['usuarios', 'escolas'] }).then(async sess => {
   const { $, esc, data } = UI;
   UI.tabs(document);
   const fU = $('#fU');
-  fU.elements.papel.innerHTML = Object.entries(DB.PAPEIS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  $('#boxPapeis').innerHTML = Auth.ORDEM.map(k =>
+    `<label style="display:flex;gap:.35rem;align-items:center;font-weight:400;color:var(--text)"><input type="checkbox" name="perfil_${k}"> ${DB.PAPEIS[k]}</label>`).join('');
+  const papeisMarcados = () => Auth.ORDEM.filter(k => fU.elements['perfil_' + k].checked);
+  const marcarPapeis = lista => Auth.ORDEM.forEach(k => { fU.elements['perfil_' + k].checked = lista.includes(k); });
   fU.elements.escolaId.innerHTML = UI.options(DB.list('escolas'), 'id', e => e.nome, '', '—');
 
   function limpar() { fU.reset(); fU.elements.login.readOnly = false; fU.elements.senha.placeholder = 'Em branco = manter'; fU.elements.id.value = ''; fU.elements.ativo.checked = true; $('#tituloU').textContent = 'Novo usuário'; }
@@ -85,10 +91,14 @@ UI.init({ cols: ['usuarios', 'escolas'] }).then(async sess => {
   fU.addEventListener('submit', async ev => {
     ev.preventDefault();
     const o = UI.formData(fU);
+    Auth.ORDEM.forEach(k => delete o['perfil_' + k]);
+    o.papeis = papeisMarcados();
+    o.papel = o.papeis[0];
+    if (!o.papeis.length) return UI.toast('Marque pelo menos um perfil.');
     o.login = o.login.toLowerCase();
     if (DB.list('usuarios').some(u => u.login === o.login && u.id !== o.id)) return UI.toast('Login já existe.');
-    if (o.papel === 'merendeira' && !o.escolaId) return UI.toast('Vincule a merendeira a uma escola.');
-    if (o.id === sess.userId && (o.papel !== 'admin' || !o.ativo)) return UI.toast('Você não pode remover seu próprio acesso de administrador.');
+    if (o.papeis.includes('merendeira') && !o.escolaId) return UI.toast('Perfil Merendeira: vincule o usuário a uma escola.');
+    if (o.id === sess.userId && (!o.papeis.includes('admin') || !o.ativo)) return UI.toast('Você não pode remover seu próprio acesso de administrador.');
     const senha = o.senha; delete o.senha;
     if (!o.id && !senha) return UI.toast('Informe a senha inicial.');
     if (senha) { const e = Auth.validaSenha(senha); if (e) return UI.toast(e); }
@@ -111,9 +121,9 @@ UI.init({ cols: ['usuarios', 'escolas'] }).then(async sess => {
   });
 
   function render() {
-    let h = '<thead><tr><th>Nome</th><th>Login</th><th>Perfil</th><th>Escola</th><th>Último acesso</th><th>Status</th><th></th></tr></thead><tbody>';
+    let h = '<thead><tr><th>Nome</th><th>Login</th><th>Perfis</th><th>Escola</th><th>Último acesso</th><th>Status</th><th></th></tr></thead><tbody>';
     DB.list('usuarios').forEach(u => {
-      h += `<tr><td>${esc(u.nome)}</td><td>${esc(u.login)}</td><td>${DB.PAPEIS[u.papel]}</td><td>${esc((DB.get('escolas', u.escolaId) || {}).nome || '')}</td>
+      h += `<tr><td>${esc(u.nome)}</td><td>${esc(u.login)}</td><td>${Auth.papeisDe(u).map(p => DB.PAPEIS[p]).join('<br>')}</td><td>${esc((DB.get('escolas', u.escolaId) || {}).nome || '')}</td>
         <td>${u.ultimoAcesso ? data(u.ultimoAcesso) : '-'}</td>
         <td>${u.ativo ? '<span class="badge ok">Ativo</span>' : '<span class="badge bad">Inativo</span>'} ${u.trocarSenha ? '<span class="badge warn">Trocar senha</span>' : ''}</td>
         <td style="white-space:nowrap"><button class="sm secondary" data-ed="${u.id}">Editar</button>
@@ -146,7 +156,8 @@ UI.init({ cols: ['usuarios', 'escolas'] }).then(async sess => {
     }
     const id = ev.target.dataset.ed; if (!id) return;
     const u = DB.get('usuarios', id); limpar();
-    UI.fillForm(fU, { id: u.id, nome: u.nome, login: u.login, papel: u.papel, escolaId: u.escolaId || '', ativo: u.ativo });
+    UI.fillForm(fU, { id: u.id, nome: u.nome, login: u.login, escolaId: u.escolaId || '', ativo: u.ativo });
+    marcarPapeis(Auth.papeisDe(u));
     fU.elements.login.readOnly = DB.modo === 'firebase';
     fU.elements.senha.placeholder = 'Em branco = manter (ou use Resetar senha)';
     $('#tituloU').textContent = 'Editar usuário'; fU.scrollIntoView();

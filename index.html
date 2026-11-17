@@ -48,9 +48,9 @@
   const params = new URLSearchParams(location.search);
   const volta = params.get('volta');
 
-  function destino(papel) {
-    if (volta && Auth.ACESSO[volta] && Auth.ACESSO[volta].includes(papel)) return volta;
-    return Auth.paginaInicial(papel);
+  function destino(u) {
+    if (volta && Auth.ACESSO[volta] && Auth.pode(u, volta)) return volta;
+    return Auth.paginaInicial(u);
   }
   function mostrarTroca() {
     UI.$('#fLogin').classList.add('hidden');
@@ -66,7 +66,7 @@
     btn.disabled = false;
     if (!r.ok) return erro('#msg', r.msg);
     if (r.trocarSenha) return mostrarTroca();
-    location.replace(destino(r.user.papel));
+    location.replace(destino(r.user));
   });
 
   UI.$('#fTroca').addEventListener('submit', async ev => {
@@ -80,7 +80,7 @@
     if (!s) return location.reload();
     try { await Auth.trocarSenhaInicial(n1); }
     catch (x) { return erro('#msg2', (window.FB && FB.traduzErro) ? FB.traduzErro(x) : x.message); }
-    location.replace(destino(s.papel));
+    location.replace(destino(s));
   });
 
   const btnEntrar = UI.$('#fLogin button');
@@ -97,7 +97,7 @@
     const sess = await Auth.ready();
     if (sess && sess.ativo !== false) {
       if (sess.trocarSenha || (!Auth.online() && (DB.get('usuarios', sess.userId) || {}).trocarSenha)) mostrarTroca();
-      else location.replace(destino(sess.papel));
+      else location.replace(destino(sess));
     }
   } catch (e) {
     erro('#msg', 'Não foi possível conectar ao servidor: ' + (e.message || e));

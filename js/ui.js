@@ -88,14 +88,14 @@
         ['merendeira.html', 'Merendeira'],
         ['legislacao.html', 'Legislação'],
         ['usuarios.html', 'Usuários']
-      ].filter(([p]) => (Auth.ACESSO[p] || []).includes(sess.papel));
+      ].filter(([p]) => Auth.pode(sess, p));
       const bar = document.createElement('header');
       bar.className = 'topbar';
       bar.innerHTML = `
         <div class="brand">AENA<small>Alimentação Escolar · Novo Acordo-TO</small></div>
         <nav>${links.map(([p, t]) => `<a href="${p}" class="${p === pagina ? 'active' : ''}">${t}</a>`).join('')}</nav>
         <div class="user">
-          <span>${UI.esc(sess.nome)} · <small style="color:#d6efe1">${UI.esc(DB.PAPEIS[sess.papel] || sess.papel)}</small></span>
+          <span>${UI.esc(sess.nome)} · <small style="color:#d6efe1">${UI.esc(Auth.papeisDe(sess).map(p => DB.PAPEIS[p] || p).join(' + '))}</small></span>
           <button class="sm" id="btnSenha">Alterar senha</button>
           <button class="sm" id="btnSair">Sair</button>
         </div>`;

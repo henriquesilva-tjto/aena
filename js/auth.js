@@ -88,8 +88,21 @@
 
     online() { return !!(window.FB && FB.enabled); },
 
-    paginaInicial(papel) {
-      return { merendeira: 'merendeira.html', nutricionista: 'nutricionista.html', diretor: 'diretor.html' }[papel] || 'painel.html';
+    // Ordem de prioridade: o primeiro perfil define a página inicial
+    ORDEM: ['admin', 'diretor', 'nutricionista', 'secretaria', 'merendeira'],
+
+    // Lista de perfis do usuário (compatível com cadastros antigos que só têm "papel")
+    papeisDe(u) {
+      if (!u) return [];
+      const p = Array.isArray(u.papeis) && u.papeis.length ? u.papeis : (u.papel ? [u.papel] : []);
+      return this.ORDEM.filter(x => p.includes(x));
+    },
+    tem(u, ...lista) { return this.papeisDe(u).some(p => lista.includes(p)); },
+    pode(u, pagina) { const perm = this.ACESSO[pagina]; return !perm || this.tem(u, ...perm); },
+
+    paginaInicial(u) {
+      const p = typeof u === 'string' ? u : this.papeisDe(u)[0];
+      return { merendeira: 'merendeira.html', nutricionista: 'nutricionista.html', diretor: 'diretor.html' }[p] || 'painel.html';
     },
 
     validaSenha(s) {
@@ -114,7 +127,8 @@
       const snap = await fs.getDoc(fs.doc(db, 'usuarios', user.uid));
       if (!snap.exists()) return null;
       const u = snap.data();
-      return { userId: user.uid, login: u.login, nome: u.nome, papel: u.papel, escolaId: u.escolaId || '',
+      const papeis = this.papeisDe(u);
+      return { userId: user.uid, login: u.login, nome: u.nome, papel: papeis[0] || u.papel, papeis, escolaId: u.escolaId || '',
         ativo: u.ativo !== false, trocarSenha: !!u.trocarSenha, email: user.email };
     },
 
@@ -188,11 +202,12 @@
         const u = DB.get('usuarios', s.userId);
         if (!u || !u.ativo) { await this.logout(); return null; }
         s.trocarSenha = !!u.trocarSenha; s.escolaId = u.escolaId || '';
+        s.papeis = this.papeisDe(u); s.papel = s.papeis[0] || u.papel;
       }
       if (!s.ativo && this.online()) { await this.logout(); return null; }
       if (s.trocarSenha) { location.replace('index.html?trocar=1'); return null; }
       const permitidos = this.ACESSO[pagina];
-      if (permitidos && !permitidos.includes(s.papel)) { location.replace(this.paginaInicial(s.papel)); return null; }
+      if (!this.pode(s, pagina)) { location.replace(this.paginaInicial(s)); return null; }
       return s;
     },
 
@@ -272,7 +287,7 @@
       const u = DB.get('usuarios', userId);
       if (!u) return;
       if (userId === this.session().userId) throw new Error('Você não pode remover o seu próprio usuário.');
-      if (u.papel === 'admin' && DB.list('usuarios').filter(x => x.papel === 'admin' && x.ativo !== false).length <= 1)
+      if (this.tem(u, 'admin') && DB.list('usuarios').filter(x => this.tem(x, 'admin') && x.ativo !== false).length <= 1)
         throw new Error('Não é possível remover o último administrador.');
       DB.remove('usuarios', userId);
       if (this.online()) await FB.fs.deleteDoc(FB.fs.doc(FB.db, 'logins', u.login.toLowerCase())).catch(() => {});
@@ -306,7 +321,7 @@
       }
       const uidAdm = cred.user.uid;
       const b = fs.writeBatch(db);
-      b.set(fs.doc(db, 'usuarios', uidAdm), { login: login.toLowerCase(), nome, papel: 'admin', escolaId: '', ativo: true,
+      b.set(fs.doc(db, 'usuarios', uidAdm), { login: login.toLowerCase(), nome, papel: 'admin', papeis: ['admin'], escolaId: '', ativo: true,
         trocarSenha: false, criadoEm: new Date().toISOString() });
       b.set(fs.doc(db, 'config', 'bootstrap'), { em: new Date().toISOString(), por: uidAdm });
       await b.commit();
@@ -331,7 +346,7 @@
       for (const [login, nome, papel] of padrao) {
         const s = salt();
         d.usuarios.push({
-          id: DB.uid(), login, nome, papel, sal: s, senha: await this.hash('aena2026', s),
+          id: DB.uid(), login, nome, papel, papeis: [papel], sal: s, senha: await this.hash('aena2026', s),
           trocarSenha: true, ativo: true,
           escolaId: papel === 'merendeira' && d.escolas[0] ? d.escolas[0].id : ''
         });
@@ -353,7 +368,8 @@
       }
       u.falhas = 0; u.bloqueadoAte = 0; u.ultimoAcesso = new Date().toISOString();
       DB.save();
-      const sess = { userId: u.id, login: u.login, nome: u.nome, papel: u.papel, escolaId: u.escolaId || '', ativo: true,
+      const papeis = this.papeisDe(u);
+      const sess = { userId: u.id, login: u.login, nome: u.nome, papel: papeis[0] || u.papel, papeis, escolaId: u.escolaId || '', ativo: true,
         trocarSenha: !!u.trocarSenha, exp: Date.now() + SESSION_HORAS * 3600 * 1000 };
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
       return { ok: true, user: u, trocarSenha: !!u.trocarSenha };

@@ -338,7 +338,7 @@
         for (const c of COLS) await this.fetch(c);
       }
       const d = limpo(this.data);
-      if (this.modo === 'firebase') d.usuarios = d.usuarios.map(u => ({ id: u.id, login: u.login, nome: u.nome, papel: u.papel, escolaId: u.escolaId, ativo: u.ativo }));
+      if (this.modo === 'firebase') d.usuarios = d.usuarios.map(u => ({ id: u.id, login: u.login, nome: u.nome, papel: u.papel, papeis: u.papeis, escolaId: u.escolaId, ativo: u.ativo }));
       return JSON.stringify(d, null, 2);
     },
 

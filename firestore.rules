@@ -9,7 +9,10 @@ service cloud.firestore {
     function logado() { return request.auth != null; }
     function eu() { return get(caminhoUsuario()).data; }
     function ativo() { return logado() && exists(caminhoUsuario()) && eu().ativo == true; }
-    function perfil(lista) { return ativo() && eu().papel in lista; }
+    // Usuário pode ter vários perfis (campo "papeis"); "papel" é o principal (cadastros antigos)
+    function perfil(lista) {
+      return ativo() && (eu().papel in lista || ('papeis' in eu() && eu().papeis.hasAny(lista)));
+    }
 
     // ---------- Usuários ----------
     match /usuarios/{uid} {

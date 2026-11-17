@@ -210,7 +210,7 @@ UI.init({ cols: ['produtos', 'escolas', 'fornecedores', 'entradas', 'saidas', 'r
   if (!sess) return;
   const { $, esc, money, num, data } = UI;
   // Nutricionista: só consulta o estoque e cadastra/edita produtos
-  if (sess.papel === 'nutricionista') {
+  if (!Auth.tem(sess, 'admin', 'diretor')) {
     const permitidas = ['tEstoque', 'tProdutos'];
     UI.$$('.tabs button').forEach(bt => { if (!permitidas.includes(bt.dataset.tab)) bt.style.display = 'none'; });
     UI.$$('.tab-panel').forEach(p => { if (!permitidas.includes(p.id)) p.classList.add('hidden'); });

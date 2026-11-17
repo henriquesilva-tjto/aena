@@ -43,6 +43,7 @@ Sistema web para gerenciar a alimentação escolar (PNAE) da Secretaria Municipa
 50 mil leituras e 20 mil gravações por dia, e 1 GB de dados. Para um município do porte de Novo Acordo, sobra bastante. O sistema carrega só o necessário de cada página (o relatório busca apenas o período escolhido) e mantém um resumo de estoque por produto, para não reler o histórico.
 
 ### Usuários e senhas (tela Usuários)
+- **Vários perfis por usuário:** marque um ou mais perfis (ex.: Diretor + Nutricionista). A pessoa acessa todas as páginas desses perfis; a página inicial segue a ordem Admin › Diretor › Nutricionista › Secretaria › Merendeira.
 - **Resetar senha:** o admin define uma senha temporária (o sistema sugere uma). O usuário entra com o mesmo login e é obrigado a trocá-la. Funciona para qualquer login, com ou sem e-mail.
 - **Remover:** o usuário perde o acesso na hora; os registros que ele fez continuam no sistema. Para afastamento temporário, prefira *Editar → desmarcar Ativo*.
 - Cada pessoa troca a própria senha em **Alterar senha**.

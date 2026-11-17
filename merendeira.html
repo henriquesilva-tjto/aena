@@ -73,9 +73,11 @@ UI.init({ cols: ['produtos', 'escolas', 'preparacoes', 'cardapios'], periodo: { 
 
   // Merendeira vê só a sua escola; diretor/admin escolhem
   const escolas = DB.list('escolas').filter(e => e.ativo !== false);
-  const minhas = sess.papel === 'merendeira' && sess.escolaId ? escolas.filter(e => e.id === sess.escolaId) : escolas;
+  // Só merendeira (sem perfil de admin/diretor) fica presa à própria escola
+  const soMerendeira = !Auth.tem(sess, 'admin', 'diretor');
+  const minhas = soMerendeira && sess.escolaId ? escolas.filter(e => e.id === sess.escolaId) : escolas;
   $('#selEscola').innerHTML = UI.options(minhas, 'id', e => e.nome, sess.escolaId || (minhas[0] || {}).id);
-  if (sess.papel === 'merendeira' && sess.escolaId) $('#selEscola').disabled = true;
+  if (soMerendeira && sess.escolaId) $('#selEscola').disabled = true;
   if (!minhas.length) $('#cardapioDia').innerHTML = '<div class="alert bad">Nenhuma escola vinculada ao seu usuário. Procure o administrador.</div>';
   $('#selData').value = UI.hoje();
   $('#selData').max = UI.hoje();
@@ -168,7 +170,7 @@ UI.init({ cols: ['produtos', 'escolas', 'preparacoes', 'cardapios'], periodo: { 
       tot += r.alunos;
       const sds = (r.itens || [])
         .map(s => { const p = DB.get('produtos', s.produtoId) || {}; return `${esc(p.nome)}: ${num(s.quantidade, 3)} ${p.unidade || ''}`; }).join('<br>');
-      const podeExcluir = sess.papel !== 'merendeira' || (r.criadoPor === sess.login && r.data === UI.hoje());
+      const podeExcluir = !soMerendeira || (r.criadoPor === sess.login && r.data === UI.hoje());
       h += `<tr><td>${data(r.data)}</td><td>${esc(r.turno)}</td><td>${esc(r.tipo)}</td><td class="num">${r.alunos}</td><td>${esc(r.servido)}</td>
         <td><small>${sds || '-'}</small></td><td><small>${esc(r.ocorrencia)}</small></td><td>${esc(r.criadoPor)}</td>
         <td>${podeExcluir ? `<button class="sm danger" data-del="${r.id}">Excluir</button>` : ''}</td></tr>`;
